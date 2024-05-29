@@ -57,38 +57,39 @@ lrb_error lrb_encode_bitmap(const void* bitmap, const unsigned int width, const 
 		do {
 			start_point = j;
 			color = cbit[line_index + j];
-			while ((++j < width) && (color == cbit[j + line_index]));
+			while ((++j < width) && (color == cbit[line_index + j]));
 
 			distance = j - start_point;
+			if (!distance || start_point + distance > width) {
+				free(rle_res->data);
+				memset(rle_res, 0, sizeof(lrb_rle_result));
+				return LRB_INVALID_DATA;
+			}
 			if (0 == color) {
 				rle_res->data[rle_res->length++] = 0;
 				if (distance > 63) {
-					rle_res->data[rle_res->length++] = 0x40 | ((unsigned char)(distance >> 8) & 0x3F);
-					rle_res->data[rle_res->length++] = (unsigned char)distance & 0xFF;
+					rle_res->data[rle_res->length++] = (0x40 | ((distance >> 8) & 0x3F));
+					rle_res->data[rle_res->length++] = (distance & 0xFF);
+				} else {
+					rle_res->data[rle_res->length++] = (distance & 0x3F);
 				}
-				else {
-					rle_res->data[rle_res->length++] = (unsigned char)distance & 0x3F;
-				}
-			}
-			else {
+			} else {
 				if (distance > 63) {
 					rle_res->data[rle_res->length++] = 0;
-					rle_res->data[rle_res->length++] = 0xC0 | ((unsigned char)(distance >> 8) & 0x3F);
-					rle_res->data[rle_res->length++] = distance & 0xFF;
+					rle_res->data[rle_res->length++] = (0xC0 | ((distance >> 8) & 0x3F));
+					rle_res->data[rle_res->length++] = (distance & 0xFF);
 					rle_res->data[rle_res->length++] = color;
-				}
-				else if (distance > 2) {
+				} else if (distance > 2) {
 					rle_res->data[rle_res->length++] = 0;
-					rle_res->data[rle_res->length++] = 0x80 | ((unsigned char)distance & 0x3F);
+					rle_res->data[rle_res->length++] = (0x80 | (distance & 0x3F));
 					rle_res->data[rle_res->length++] = color;
-				}
-				else {
+				} else {
 					rle_res->data[rle_res->length++] = color;
 					if (distance == 2)
 						rle_res->data[rle_res->length++] = color;
 				}
 			}
-			if (allocated_size < rle_res->length + 6) {
+			if (allocated_size < rle_res->length + 8) {
 				allocated_size += step;
 				tmpptr = (unsigned char*)realloc(rle_res->data, allocated_size * sizeof(unsigned char));
 				if (!tmpptr || allocated_size > 8 << 20) {
