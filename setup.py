@@ -26,6 +26,7 @@ SOFTWARE.
 """
 
 import setuptools
+import sysconfig
 import numpy as np
 from setuptools.command.build_ext import build_ext
 from setuptools.errors import CCompilerError
@@ -53,6 +54,11 @@ class ve_build_ext(build_ext):
             raise BuildFailed() from e
 
     def build_extension(self, ext):
+        extra_compile_args = {
+        #    'unix': ['-O2'],
+        }
+        ext.extra_compile_args = extra_compile_args.get(self.compiler.compiler_type, [])
+
         try:
             super().build_extension(ext)
         except (CCompilerError, ExecError, PlatformError) as e:
@@ -70,16 +76,27 @@ def show_message(*lines):
     print("=" * 74)
 
 if __name__ == "__main__":
-    try:
-        module = setuptools.Extension(
-            f"{NAME}._{NAME}",
-            sources=[f"src/{NAME}/_brule.cc", f"src/{NAME}/_librle.cc"],
-            include_dirs=[np.get_include()],
-            language="c"
-        )
-    except:
-        module = None
-    def run_setup(with_binary, module = None):
+    extra_compile_args = sysconfig.get_config_var('CFLAGS').split()
+
+    brule_codec = setuptools.Extension(
+        f"{NAME}._{NAME}",
+        sources=[f"src/{NAME}/_brule.cc", f"src/{NAME}/_librle.cc"],
+        include_dirs=[np.get_include()],
+        language="c",
+        extra_compile_args=extra_compile_args,
+    )
+
+    layout_eng = setuptools.Extension(
+        f"{NAME}._layouteng",
+        sources=[f"src/{NAME}/_layouteng.cc"],
+        include_dirs=[np.get_include()],
+        language="c",
+        extra_compile_args=extra_compile_args,
+    )
+
+    modules = [brule_codec, layout_eng]
+
+    def run_setup(modules):
         setuptools.setup(
             name=NAME,
             version=meta['__version__'],
@@ -91,7 +108,7 @@ if __name__ == "__main__":
             packages=setuptools.find_packages("src"),
             package_dir={'': 'src'},
             cmdclass={"build_ext": ve_build_ext},
-            ext_modules=[module] if with_binary else [],
+            ext_modules=modules,
             classifiers=[
                 'Development Status :: 3 - Alpha',
                 'Intended Audience :: Developers',
@@ -104,12 +121,10 @@ if __name__ == "__main__":
         )
     ####run_setup
     try:
-        if module is None:
-            raise BuildFailed
-        run_setup(True, module)
+        run_setup(modules)
     except BuildFailed:
         show_message(
             "WARNING: Failed to compile optimised implementation."
             "Retrying the build with only pure Python implementation.",
         )
-        run_setup(False)
+        run_setup([])

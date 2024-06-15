@@ -1,7 +1,9 @@
 # Brule
-Bitmap RUn LEngth coder and decoder.
+Collection of C extension modules for SUPer with pure-python fallbacks
+- Brule: Bitmap RUn LEngth coder and decoder.
+- LayoutEngine: An optimal two-rects layout finder for a sequence of images.
 
-## Brief
+## Brule brief
 Brule implements 3 times the same run-length encoder and decoder.
 - C (fastest)
 - numba (fast)
@@ -14,8 +16,9 @@ For the encoder, the C implementation is up to 20 times faster than numba. The p
 $ python -m pip install brule
 ```
 
-## Usage
+## Example
 
+The run-length codec is operated like this:
 ```python
 >>> from brule import Brule
 >>> import numpy as np
