@@ -284,7 +284,7 @@ PyObject *layouteng_add(PyObject *self, PyObject *arg)
             }
         }
     }
-    has_layout_changed = layout_changed;
+    has_layout_changed = has_layout_changed || layout_changed;
     Py_RETURN_NONE;  
 }
 
@@ -324,6 +324,7 @@ PyObject *layouteng_find(PyObject *self, PyObject *arg)
 
         brute_force_windows(new_windows, &extended_container);
         memcpy(last_windows, new_windows, NUM_WINDOWS_MAX*sizeof(container_t));
+        has_layout_changed = 0;
     } else {
         if (last_windows[0].x2 == 0)
             return NULL;

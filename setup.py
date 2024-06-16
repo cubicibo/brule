@@ -76,7 +76,10 @@ def show_message(*lines):
     print("=" * 74)
 
 if __name__ == "__main__":
-    extra_compile_args = sysconfig.get_config_var('CFLAGS').split()
+    try:
+        extra_compile_args = sysconfig.get_config_var('CFLAGS').split()
+    except AttributeError:
+        extra_compile_args = []
 
     brule_codec = setuptools.Extension(
         f"{NAME}._{NAME}",
