@@ -28,8 +28,10 @@ class _PyLayoutEngine:
     def __init__(self, shape: tuple[int, int]) -> None:
         self._screen = None
         self.init(shape)
+        self._last_raw_container = None
 
-    def add(self, xp: int, yp: int, mask: npt.NDArray[np.uint8]) -> None:
+    def add(self, xym: tuple[int, int, npt.NDArray[np.uint8]]) -> None:
+        xp, yp, mask = xym
         assert self._screen is not None
         self._screen[yp:yp+mask.shape[0], xp:xp+mask.shape[1]] |= (mask > 0)
 
@@ -38,6 +40,10 @@ class _PyLayoutEngine:
         rmin, rmax = np.where(np.any(mask, axis=1))[0][[0, -1]]
         cmin, cmax = np.where(np.any(mask, axis=0))[0][[0, -1]]
         return cmin, rmin, cmax+1, rmax+1
+
+    def get_container(self) -> tuple[int, int, int, int]:
+        assert self._last_raw_container is not None
+        return self._last_raw_container
 
     def find(self) -> tuple[_Coordinates,_Coordinates,_Coordinates, int]:
         cls = self.__class__
@@ -51,6 +57,7 @@ class _PyLayoutEngine:
         ocbox = (cmin, rmin, cmax, rmax)
         best_score = f_area(ocbox)
         best_wds = (ocbox, ocbox)
+        self._last_raw_container = ocbox
 
         rmin -= min(7, rmin)
         rmax += min(7, self._screen.shape[0]-rmax)
@@ -141,6 +148,10 @@ class LayoutEngine:
     def get_layout(self) -> tuple[_Coordinates, _Coordinates, _Coordinates, int]:
         assert self._ready
         return self._iinst.find()
+
+    def get_raw_container(self) -> tuple[int, int, int, int]:
+        assert self._ready
+        return self._iinst.get_container()
 
     def reset(self) -> None:
         self._setup_internals(self._shape)

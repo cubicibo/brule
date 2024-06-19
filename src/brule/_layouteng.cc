@@ -64,6 +64,11 @@ PyDoc_STRVAR(layouteng_find_doc, "find() -> (bbox, bbox_w0, bbox_w1, bool)\
 \
 Find and return the new optimal layout.");
 
+PyDoc_STRVAR(layouteng_get_doc, "get_container() -> (x1, y1, x2, y2)\
+\
+Find and return the raw container without any additional padding.");
+
+
 #define CONTAINER_TO_PYTUP(c, xp, yp) Py_BuildValue("(iiii)", c.x1-xp, c.y1-yp, c.x2-xp, c.y2-yp);
 #define BOX_AREA(box) (uint32_t)((box.x2-box.x1)*(box.y2-box.y1))
 #define MAX(a, b) (a > b ? a : b)
@@ -238,6 +243,30 @@ static void brute_force_windows(container_t *best, const container_t *cbox)
     is_vertical_layout = is_vertical;
 }
 
+static int get_current_container(container_t *current_cont)
+{
+    int x,y;
+    for (y = 0; y < shape.height && 0 == screen[y*shape.width] && 0 == memcmp(&screen[y*shape.width], &screen[y*shape.width+1], shape.width-1); y++);
+    current_cont->y1 = MIN(y, shape.height);
+
+    for (y = (uint16_t)(shape.height - 1); y > current_cont->y1 && screen[y*shape.width] == 0 && 0 == memcmp(&screen[y*shape.width], &screen[y*shape.width+1], shape.width-1); y--);
+    current_cont->y2 = MIN(y + 1, shape.height);
+
+    current_cont->x1 = shape.width;
+    for (y = current_cont->y1; y < current_cont->y2; y++) {
+        for (x = 0; x < shape.width; x++) {
+            if (screen[y*shape.width + x]) {
+                current_cont->x2 = MAX(current_cont->x2, x);
+                current_cont->x1 = MIN(current_cont->x1, x);
+            }
+        }
+    }
+    current_cont->x2 = MIN(current_cont->x2+1, shape.width);
+
+    //container is valid?
+    return !(current_cont->x1 >= current_cont->x2 || current_cont->y1 >= current_cont->y2);
+}
+
 PyObject *layouteng_add(PyObject *self, PyObject *arg)
 {
     if (Py_None == arg || !PyTuple_Check(arg) || 3 != PyTuple_Size(arg)) {
@@ -294,29 +323,10 @@ PyObject *layouteng_find(PyObject *self, PyObject *arg)
     container_t extended_container;
     container_t current_cont = {0};
 
-    int x,y;
-    for (y = 0; y < shape.height && 0 == screen[y*shape.width] && 0 == memcmp(&screen[y*shape.width], &screen[y*shape.width+1], shape.width-1); y++);
-    current_cont.y1 = MIN(y, shape.height);
-
-    for (y = (uint16_t)(shape.height - 1); y > current_cont.y1 && screen[y*shape.width] == 0 && 0 == memcmp(&screen[y*shape.width], &screen[y*shape.width+1], shape.width-1); y--);
-    current_cont.y2 = MIN(y + 1, shape.height);
-
-    current_cont.x1 = shape.width;
-    for (y = current_cont.y1; y < current_cont.y2; y++) {
-        for (x = 0; x < shape.width; x++) {
-            if (screen[y*shape.width + x]) {
-                current_cont.x2 = MAX(current_cont.x2, x);
-                current_cont.x1 = MIN(current_cont.x1, x);
-            }
-        }
-    }
-    current_cont.x2 = MIN(current_cont.x2+1, shape.width);
-
-    if (current_cont.x1 >= current_cont.x2 || current_cont.y1 >= current_cont.y2) {
-        return NULL;
-    }
-
     if (has_layout_changed) {
+        if (!get_current_container(&current_cont)) {
+            return NULL;
+        }
         or_containers(&container, &current_cont);
 
         //Generate a larger container with 7 pixels added in all direction (whenever possible)
@@ -394,12 +404,18 @@ PyObject* layouteng_init(PyObject* self, PyObject* arg)
     Py_RETURN_NONE;
 }
 
+PyObject* layouteng_get_container(PyObject* self, PyObject* arg)
+{
+    return CONTAINER_TO_PYTUP(container, 0, 0);
+}
+
 /*
  * List of functions to add to brule in exec_brule().
  */
 static PyMethodDef layouteng_functions[] = {
     { "init", (PyCFunction)layouteng_init, METH_O, layouteng_init_doc },
     { "add", (PyCFunction)layouteng_add, METH_O, layouteng_add_doc },
+    { "get_container", (PyCFunction)layouteng_get_container, METH_NOARGS, layouteng_get_doc },
     { "find", (PyCFunction)layouteng_find, METH_NOARGS, layouteng_find_doc },
     { NULL, NULL, 0, NULL } /* marks end of array */
 };
