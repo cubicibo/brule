@@ -54,10 +54,10 @@ class ve_build_ext(build_ext):
             raise BuildFailed() from e
 
     def build_extension(self, ext):
-        extra_compile_args = {
+        #extra_compile_args = {
         #    'unix': ['-O2'],
-        }
-        ext.extra_compile_args = extra_compile_args.get(self.compiler.compiler_type, [])
+        #}
+        #ext.extra_compile_args += extra_compile_args.get(self.compiler.compiler_type, [])
 
         try:
             super().build_extension(ext)

@@ -36,10 +36,10 @@ class _PyLayoutEngine:
         self._screen[yp:yp+mask.shape[0], xp:xp+mask.shape[1]] |= (mask > 0)
 
     @staticmethod
-    def _crop(mask: npt.NDArray[np.uint8]) -> tuple[int, int, int, int]:
+    def _crop(mask: npt.NDArray[np.uint8], yo: int, xo: int) -> tuple[int, int, int, int]:
         rmin, rmax = np.where(np.any(mask, axis=1))[0][[0, -1]]
         cmin, cmax = np.where(np.any(mask, axis=0))[0][[0, -1]]
-        return cmin, rmin, cmax+1, rmax+1
+        return cmin+xo, rmin+yo, cmax+1+xo, rmax+1+yo
 
     def get_container(self) -> tuple[int, int, int, int]:
         assert self._last_raw_container is not None
@@ -53,7 +53,7 @@ class _PyLayoutEngine:
         f_area = lambda xyc: (xyc[2]-xyc[0])*(xyc[3]-xyc[1])
         is_vertical = -1
 
-        cmin, rmin, cmax, rmax = cls._crop(self._screen)
+        cmin, rmin, cmax, rmax = cls._crop(self._screen, 0, 0)
         ocbox = (cmin, rmin, cmax, rmax)
         best_score = f_area(ocbox)
         best_wds = (ocbox, ocbox)
@@ -68,14 +68,14 @@ class _PyLayoutEngine:
         f_score = lambda wds: sum(map(f_area, wds))
 
         for xk in range(cmin+8, cmax-8):
-            lwd = (cls._crop(self._screen[rmin:rmax, cmin:xk]), cls._crop(self._screen[rmin:rmax, xk:cmax]))
+            lwd = (cls._crop(self._screen[rmin:rmax, cmin:xk], rmin, cmin), cls._crop(self._screen[rmin:rmax, xk:cmax], rmin, xk))
             if best_score > (new_score := f_score(lwd)):
                 best_score = new_score
                 best_wds = lwd
                 is_vertical = False
 
         for yk in range(rmin+8, rmax-8):
-            lwd = (cls._crop(self._screen[rmin:yk, cmin:cmax]), cls._crop(self._screen[yk:rmax, cmin:cmax]))
+            lwd = (cls._crop(self._screen[rmin:yk, cmin:cmax], rmin, cmin), cls._crop(self._screen[yk:rmax, cmin:cmax], yk, cmin))
             if best_score > (new_score := f_score(lwd)):
                 best_score = new_score
                 best_wds = lwd
@@ -84,7 +84,6 @@ class _PyLayoutEngine:
         if is_vertical == -1:
             cbox = ocbox
             best_wds = (ocbox, ocbox)
-
         final_wds = []
         for k, wd in enumerate(best_wds):
             final_wds.append((wd[0]-cbox[0], wd[1]-cbox[1], wd[2]-cbox[0], wd[3]-cbox[1]))
