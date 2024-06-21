@@ -263,8 +263,22 @@ static int get_current_container(container_t *current_cont)
     }
     current_cont->x2 = MIN(current_cont->x2+1, shape.width);
 
-    //container is valid?
-    return !(current_cont->x1 >= current_cont->x2 || current_cont->y1 >= current_cont->y2);
+    if (!(current_cont->x1 >= current_cont->x2 || current_cont->y1 >= current_cont->y2)) {
+        x = 8 - (current_cont->x2 - current_cont->x1);
+        if (x > 0 && current_cont->x1 >= x)
+            current_cont->x1 -= x;
+        else if(x > 0)
+            current_cont->x2 += x;
+
+        x = 8 - (current_cont->y2 - current_cont->y1);
+        if (x > 0 && current_cont->y1 >= x)
+            current_cont->y1 -= x;
+        else if(x > 0)
+            current_cont->y2 += x;
+
+        return true;
+    }
+    return false;
 }
 
 PyObject *layouteng_add(PyObject *self, PyObject *arg)

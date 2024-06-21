@@ -82,6 +82,17 @@ class _PyLayoutEngine:
                 is_vertical = True
 
         if is_vertical == -1:
+            diffx = max(0, 8 - (ocbox[2]-ocbox[0]))
+            if ocbox[0] > diffx:
+                ocbox = (cmin-diffx, rmin, cmax, rmax)
+            elif diffx > 0:
+                ocbox = (cmin, rmin, cmax+diffx, rmax)
+
+            diffy = max(0, 8 - (ocbox[3]-ocbox[1]))
+            if ocbox[1] > diffy:
+                ocbox = (cmin, rmin-diffy, cmax, rmax)
+            elif diffy > 0:
+                ocbox = (cmin, rmin, cmax, rmax+diffy)
             cbox = ocbox
             best_wds = (ocbox, ocbox)
         final_wds = []
