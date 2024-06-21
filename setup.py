@@ -119,7 +119,7 @@ if __name__ == "__main__":
                 'Programming Language :: Python :: 3.9',
             ],
             python_requires='>=3.10',
-            install_requires=["numpy", "numba"],
+            install_requires=["numpy<2.0", "numba"],
             zip_safe=False,
         )
     ####run_setup
