@@ -68,11 +68,11 @@ PyDoc_STRVAR(layouteng_get_doc, "get_container() -> (x1, y1, x2, y2)\
 \
 Find and return the raw container without any additional padding.");
 
-
 #define CONTAINER_TO_PYTUP(c, xp, yp) Py_BuildValue("(iiii)", c.x1-xp, c.y1-yp, c.x2-xp, c.y2-yp);
 #define BOX_AREA(box) (uint32_t)((box.x2-box.x1)*(box.y2-box.y1))
 #define MAX(a, b) (a > b ? a : b)
 #define MIN(a, b) (a < b ? a : b)
+#define DIM(C, X) (C.X##2 - C.X##1)
 
 //Adjust (z1) for a potential left shift, and take the largest coordinate out of the two.
 #define ADJUST_DIM(X_OR_Y) \
@@ -343,6 +343,9 @@ PyObject *layouteng_find(PyObject *self, PyObject *arg)
         }
         or_containers(&container, &current_cont);
 
+        if (DIM(container, x) < MIN_MARGIN_BOX || DIM(container, y) < MIN_MARGIN_BOX)
+            return NULL;
+
         //Generate a larger container with 7 pixels added in all direction (whenever possible)
         pad_container((const container_t *)&container, &extended_container);
 
@@ -353,19 +356,18 @@ PyObject *layouteng_find(PyObject *self, PyObject *arg)
         if (last_windows[0].x2 == 0)
             return NULL;
         pad_container((const container_t *)&container, &extended_container);
-        memcpy(new_windows, last_windows, NUM_WINDOWS_MAX*sizeof(container_t));
     }
 
     PyObject *py_cont, *py_w1, *py_w2;
     if ((uint8_t)is_vertical_layout > 1) {
         py_cont = CONTAINER_TO_PYTUP(container, 0, 0);
-        py_w1 = CONTAINER_TO_PYTUP(new_windows[0], container.x1, container.y1);
-        py_w2 = CONTAINER_TO_PYTUP(new_windows[1], container.x1, container.y1);
+        py_w1 = CONTAINER_TO_PYTUP(last_windows[0], container.x1, container.y1);
+        py_w2 = CONTAINER_TO_PYTUP(last_windows[1], container.x1, container.y1);
     }
     else {
         py_cont = CONTAINER_TO_PYTUP(extended_container, 0, 0);
-        py_w1 = CONTAINER_TO_PYTUP(new_windows[0], extended_container.x1, extended_container.y1);
-        py_w2 = CONTAINER_TO_PYTUP(new_windows[1], extended_container.x1, extended_container.y1);
+        py_w1 = CONTAINER_TO_PYTUP(last_windows[0], extended_container.x1, extended_container.y1);
+        py_w2 = CONTAINER_TO_PYTUP(last_windows[1], extended_container.x1, extended_container.y1);
     }
 
     if (py_cont && py_w1 && py_w2) {
