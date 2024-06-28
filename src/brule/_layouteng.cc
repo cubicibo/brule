@@ -127,9 +127,8 @@ static void cut_vertical(const int margin, container_t *max_cont)
         if (pixelExist)
             break;
     }
-    max_cont->x2 = MIN(max_cont->x2, xk + (pixelExist > 0) + 1);
+    max_cont->x2 = MIN(max_cont->x2, MAX(max_cont->x1 + margin, xk + (pixelExist > 0)));
 
-    pixelExist = 0;
     for (yk = max_cont->y2 - 1; yk >= max_cont->y1 + margin; yk--) {
         if(screen[yk*shape.width + max_cont->x1] || memcmp(&screen[yk*shape.width + max_cont->x1],
                                                            &screen[yk*shape.width + max_cont->x1 + 1],
@@ -180,7 +179,7 @@ static void cut_horizontal(const int margin, container_t *max_cont)
         if (pixelExist)
             break;
     }
-    max_cont->x2 = MIN(max_cont->x2, xk + (pixelExist & 0x1) + 1);
+    max_cont->x2 = MIN(max_cont->x2, MAX(max_cont->x1 + margin, xk + (pixelExist > 0)));
 
     pixelExist = 0;
     for (xk = max_cont->x1; xk < max_cont->x2 - margin && !pixelExist; xk++) {

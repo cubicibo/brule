@@ -54,10 +54,24 @@ class _PyLayoutEngine:
         is_vertical = -1
 
         cmin, rmin, cmax, rmax = cls._crop(self._screen, 0, 0)
-        ocbox = (cmin, rmin, cmax, rmax)
+        ocbox = [cmin, rmin, cmax, rmax]
+
+        diffx = max(0, 8 - (ocbox[2]-ocbox[0]))
+        if ocbox[0] > diffx:
+            ocbox[0] = cmin-diffx
+        elif diffx > 0:
+            ocbox[2] = cmax+diffx
+
+        diffy = max(0, 8 - (ocbox[3]-ocbox[1]))
+        if ocbox[1] > diffy:
+            ocbox[1] = rmin-diffy
+        elif diffy > 0:
+            ocbox[3] = rmax+diffy
+        ocbox = tuple(ocbox)
+        self._last_raw_container = ocbox
+
         best_score = f_area(ocbox)
         best_wds = (ocbox, ocbox)
-        self._last_raw_container = ocbox
 
         rmin -= min(7, rmin)
         rmax += min(7, self._screen.shape[0]-rmax)
@@ -82,23 +96,12 @@ class _PyLayoutEngine:
                 is_vertical = True
 
         if is_vertical == -1:
-            diffx = max(0, 8 - (ocbox[2]-ocbox[0]))
-            if ocbox[0] > diffx:
-                ocbox = (cmin-diffx, rmin, cmax, rmax)
-            elif diffx > 0:
-                ocbox = (cmin, rmin, cmax+diffx, rmax)
-
-            diffy = max(0, 8 - (ocbox[3]-ocbox[1]))
-            if ocbox[1] > diffy:
-                ocbox = (cmin, rmin-diffy, cmax, rmax)
-            elif diffy > 0:
-                ocbox = (cmin, rmin, cmax, rmax+diffy)
             cbox = ocbox
             best_wds = (ocbox, ocbox)
+
         final_wds = []
         for k, wd in enumerate(best_wds):
             final_wds.append((wd[0]-cbox[0], wd[1]-cbox[1], wd[2]-cbox[0], wd[3]-cbox[1]))
-
         return cbox, final_wds[0], final_wds[1], is_vertical
 
     def init(self, shape: Optional[tuple[int, int]]) -> None:
