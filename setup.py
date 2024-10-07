@@ -64,6 +64,7 @@ class ve_build_ext(build_ext):
         except (CCompilerError, ExecError, PlatformError) as e:
             raise BuildFailed() from e
         except ValueError as e:
+            import sys
             # this can happen on Windows 64 bit, see Python issue 7511
             if "'path'" in str(sys.exc_info()[1]):  # works with Python 2 and 3
                 raise BuildFailed() from e
@@ -118,8 +119,8 @@ if __name__ == "__main__":
                 'License :: OSI Approved :: MIT License',
                 'Programming Language :: Python :: 3.9',
             ],
-            python_requires='>=3.10',
-            install_requires=["numpy<2.0", "numba"],
+            python_requires='>=3.11',
+            install_requires=["numpy>=2.0.1", "numba"],
             zip_safe=False,
         )
     ####run_setup

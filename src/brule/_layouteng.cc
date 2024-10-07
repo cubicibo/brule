@@ -29,7 +29,6 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
-#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/ndarraytypes.h>
 #include <numpy/arrayobject.h>
 
@@ -303,8 +302,8 @@ PyObject *layouteng_add(PyObject *self, PyObject *arg)
     }
 
     char* bitmap = PyArray_BYTES(arr);
-    npy_intp width;
-    npy_intp height;
+    npy_intp width, height;
+
     if (!bitmap) {
         return NULL;
     } else {
@@ -327,7 +326,7 @@ PyObject *layouteng_add(PyObject *self, PyObject *arg)
         }
     }
     has_layout_changed = has_layout_changed || layout_changed;
-    Py_RETURN_NONE;  
+    Py_RETURN_NONE;
 }
 
 PyObject *layouteng_find(PyObject *self, PyObject *arg)
@@ -391,12 +390,12 @@ PyObject* layouteng_init(PyObject* self, PyObject* arg)
         screen = NULL;
         if (Py_None != arg)
             return NULL;
-        Py_RETURN_NONE;  
+        Py_RETURN_NONE;
     }
 
     shape.width = (uint16_t)PyLong_AsLong(PyTuple_GetItem(arg, 0));
     shape.height = (uint16_t)PyLong_AsLong(PyTuple_GetItem(arg, 1));
-    
+
     if (shape.height > 1088 || shape.height < 16)
         return NULL;
     if (shape.width > 1928 || shape.width < 16)
