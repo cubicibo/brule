@@ -98,7 +98,15 @@ if __name__ == "__main__":
         extra_compile_args=extra_compile_args,
     )
 
-    modules = [brule_codec, layout_eng]
+    hextree = setuptools.Extension(
+        f"{NAME}._hextree",
+        sources=[f"src/{NAME}/_hextree.cc"],
+        include_dirs=[np.get_include()],
+        language="c",
+        extra_compile_args=extra_compile_args,
+    )
+
+    modules = [brule_codec, layout_eng, hextree]
 
     def run_setup(modules):
         setuptools.setup(
@@ -120,7 +128,7 @@ if __name__ == "__main__":
                 'Programming Language :: Python :: 3.9',
             ],
             python_requires='>=3.11',
-            install_requires=["numpy>=2.0.1", "numba"],
+            install_requires=["numpy>=2.0.1", "numba", "anytree"],
             zip_safe=False,
         )
     ####run_setup

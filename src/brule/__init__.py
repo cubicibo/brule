@@ -25,5 +25,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+from .__metadata__ import __version__, __author__
+
 from .brule import Brule
 from .layouteng import LayoutEngine
+from .hextree import HexTree
