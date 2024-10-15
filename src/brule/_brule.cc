@@ -29,7 +29,6 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
-#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/ndarraytypes.h>
 #include <numpy/arrayobject.h>
 
@@ -112,7 +111,9 @@ PyObject* brule_decode(PyObject* self, PyObject* arg)
         if (res.width && res.height) {
             npy_intp dims[2] = {res.height, res.width};
             PyArray_Descr *desc = PyArray_DescrFromType(NPY_BYTE);
-            PyObject *arr_obj = PyArray_NewFromDescr(&PyArray_Type, desc, 2, dims, NULL, res.data, NPY_ARRAY_OWNDATA, NULL);
+            PyObject *arr_obj = PyArray_NewFromDescr(&PyArray_Type, desc, 2, dims, NULL, res.data, 0, NULL);
+            PyArray_ENABLEFLAGS((PyArrayObject*)arr_obj, NPY_ARRAY_OWNDATA);
+
             res.data = NULL; //do not own anymore, numpy will free it when no longer needed.
             return arr_obj;
         } else {
@@ -139,28 +140,10 @@ static PyMethodDef brule_functions[] = {
 };
 
 /*
- * Initialize brule. May be called multiple times, so avoid
- * using static state.
- */
-int exec_brule(PyObject *module) {
-    PyModule_AddFunctions(module, brule_functions);
-
-    PyModule_AddStringConstant(module, "__author__", LRB_AUTHOR);
-    PyModule_AddStringConstant(module, "__version__", LRB_VERSION_STR);
-    
-    return 0;
-}
-
-/*
  * Documentation for brule.
  */
 PyDoc_STRVAR(brule_doc, "Bitmap RUn LEngth module");
 
-
-/*static PyModuleDef_Slot brule_slots[] = {
-    { Py_mod_exec, exec_brule },
-    { 0, NULL }
-};*/
 
 static PyModuleDef brule_def = {
     PyModuleDef_HEAD_INIT,

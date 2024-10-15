@@ -64,6 +64,7 @@ class ve_build_ext(build_ext):
         except (CCompilerError, ExecError, PlatformError) as e:
             raise BuildFailed() from e
         except ValueError as e:
+            import sys
             # this can happen on Windows 64 bit, see Python issue 7511
             if "'path'" in str(sys.exc_info()[1]):  # works with Python 2 and 3
                 raise BuildFailed() from e
@@ -97,7 +98,15 @@ if __name__ == "__main__":
         extra_compile_args=extra_compile_args,
     )
 
-    modules = [brule_codec, layout_eng]
+    hextree = setuptools.Extension(
+        f"{NAME}._hextree",
+        sources=[f"src/{NAME}/_hextree.cc"],
+        include_dirs=[np.get_include()],
+        language="c",
+        extra_compile_args=extra_compile_args,
+    )
+
+    modules = [brule_codec, layout_eng, hextree]
 
     def run_setup(modules):
         setuptools.setup(
@@ -118,8 +127,8 @@ if __name__ == "__main__":
                 'License :: OSI Approved :: MIT License',
                 'Programming Language :: Python :: 3.9',
             ],
-            python_requires='>=3.10',
-            install_requires=["numpy<2.0", "numba"],
+            python_requires='>=3.11',
+            install_requires=["numpy>=2.0.1", "numba", "anytree"],
             zip_safe=False,
         )
     ####run_setup

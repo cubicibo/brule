@@ -132,19 +132,23 @@ class Brule:
     @classmethod
     def get_capabilities(cls) -> str:
         cap  = ['C'] * (cls._cimpl_codec is not None)
-        cap += ['numba'] * (cls._numba_codec is not None)
-        return cap + ['python']
+        cap += ['Numba'] * (cls._numba_codec is not None)
+        return cap + ['Python']
 
     @classmethod
-    def _downgrade_impl(cls, impl: str) -> bool:
+    def _select_impl(cls, impl: str) -> bool:
+        impl = impl.tolower()
         if impl == 'numba':
-            assert cls._numba_codec is not None
+            cls._setup()
             cls._cimpl_codec = None
-            return True
+            return cls._numba_codec is not None
         if impl == 'python':
             cls._cimpl_codec = None
             cls._numba_codec = None
             return True
+        if impl == 'c':
+            cls._setup()
+            return cls._cimpl_codec is not None
         return False
 
     @classmethod
