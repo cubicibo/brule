@@ -35,8 +35,6 @@
 #define MAX_WIDTH 16
 #define DTYPE_ERROR float
 
-//#define PRIORITIZE_COUNT_OVER_DEPTH
-
 //None defined: use Atkinson dithering
 //#define USE_JJN_DITHERING
 //#define USE_SIERRA_DITHERING
@@ -69,7 +67,9 @@ PyDoc_STRVAR(hextree_quantize_doc, "quantize(bitmap: tuple[NDArray[uint8], int])
 Quantize input RGBA and return (bitmap, palette).");
 
 typedef struct rgba_leaf_s {
-    uint32_t depth;
+    int16_t depth;
+    int8_t isValidLeaf;
+    int8_t leafId;
     uint32_t count;
     DTYPE_ERROR rgba[4];
     void *ref;
@@ -77,6 +77,7 @@ typedef struct rgba_leaf_s {
 
 typedef struct hexnode_s {
     rgba_leaf_t *priv;
+    struct hexnode_s *parent;
     struct hexnode_s *children[MAX_WIDTH];
 } hexnode_t;
 
@@ -146,12 +147,15 @@ static int insert(void *vctx, uint32_t value)
                 return -1;
 
             child->priv = (rgba_leaf_t*)calloc(1, sizeof(rgba_leaf_t));
+            child->parent = node;
             if (!child->priv) {
                 free(child);
                 return -1;
             }
             child->priv->depth = d;
+            child->priv->leafId = c;
             child->priv->ref = (void*)child;
+            child->priv->isValidLeaf = (d == MAX_DEPTH-1) & 0x1;
 
             unpackRgba(value, child->priv->rgba);
 
@@ -167,7 +171,7 @@ static int insert(void *vctx, uint32_t value)
             }
             ctx->leafs[ctx->nLeafs++] = (rgba_leaf_t*)child->priv;
             node->children[c] = child;
-            ctx->nEndLeafs += (d == MAX_DEPTH-1);
+            ctx->nEndLeafs += child->priv->isValidLeaf;
         }
         node = node->children[c];
         ++node->priv->count;
@@ -196,8 +200,7 @@ static int32_t inline testFetchColourLeaf(hexnode_t *cur, uint32_t value)
         else
             break;
     }
-    //is leaf?
-    if (!memcmp(&cur->children[1], cur->children, sizeof(hexnode_t*)*(MAX_WIDTH-1)))
+    if (cur->priv->isValidLeaf)
         return (int32_t)cur->priv->count;
     return -1;
 }
@@ -298,7 +301,7 @@ static inline int32_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgb
 }
 
 static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uint32_t *rgba, const uint32_t *palette,
-                                   const size_t len, const uint32_t plen, const uint32_t width )
+                                   const size_t len, const int32_t plen, const uint32_t width )
 {
     const ctx_t *ctx = (const ctx_t*)vctx;
     const uint32_t rowLen = width << 2;
@@ -380,7 +383,6 @@ static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uin
 static int generateBitmap(const void* vctx, uint8_t** bitmap, const uint32_t* rgba, const size_t len, const uint32_t plen)
 {
     const ctx_t *ctx = (const ctx_t*)vctx;
-    hexnode_t *cur = ctx->root;
 
     *bitmap = (uint8_t*)calloc(len, sizeof(uint8_t));
     if (NULL == *bitmap)
@@ -403,17 +405,71 @@ static int cmpleafs(const void* e1, const void* e2)
     const rgba_leaf_t *l1 = *(rgba_leaf_t**)(void**)e1;
     const rgba_leaf_t *l2 = *(rgba_leaf_t**)(void**)e2;
 
-#ifdef PRIORITIZE_COUNT_OVER_DEPTH
-    int r = (int)l1->count - (int)l2->count;
-    if (0 != r)
-        return r;
-    return (int)l2->depth - (int)l1->depth;
-#else
-    int r = (int)l2->depth - (int)l1->depth;
+    int r = l2->depth - l1->depth;
     if (r != 0)
         return r;
     return (int)l1->count - (int)l2->count;
-#endif
+}
+
+static int32_t reduceTo2(void *ctx, unsigned int maxLeafs, uint32_t **palette)
+{
+    ctx_t *pctx = (ctx_t*)ctx;
+    hexnode_t *ref;
+    hexnode_t *parent;
+    rgba_leaf_t* leaf;
+
+    uint32_t leafCnt = pctx->nEndLeafs;
+    uint8_t l;
+
+    if (maxLeafs < MAX_WIDTH || !pctx->leafs)
+        return -1;
+
+    qsort(pctx->leafs, pctx->nLeafs, sizeof(rgba_leaf_t*), cmpleafs);
+
+    for (uint32_t k = 0; k < pctx->nLeafs && maxLeafs < leafCnt; k++) {
+        leaf = ((rgba_leaf_t*)pctx->leafs[k]);
+        ref = (hexnode_t*)leaf->ref;
+        if (!ref || !ref->priv)
+            continue;
+        parent = ref->parent;
+
+        if (parent->priv->isValidLeaf) {
+            DTYPE_ERROR den = parent->priv->count + leaf->count;
+            DTYPE_ERROR n1 = parent->priv->count/den, n2 = leaf->count/den;
+            for (l = 0; l < 4; l++)
+                parent->priv->rgba[l] = parent->priv->rgba[l]*n1 + leaf->rgba[l]*n2;
+            parent->priv->count += leaf->count;
+            --leafCnt;
+        } else {
+            for (l = 0; l < 4; l++)
+                parent->priv->rgba[l] = leaf->rgba[l];
+            parent->priv->count = leaf->count;
+            parent->priv->isValidLeaf = 1;
+        }
+        leaf->isValidLeaf = 0;
+        leaf->ref = NULL;
+        free(parent->children[leaf->leafId]);
+        parent->children[leaf->leafId] = NULL;
+    }
+
+    *palette = (uint32_t*)calloc(leafCnt, sizeof(uint32_t));
+    if (!palette)
+        return -1;
+
+    uint32_t *ppal = *palette;
+    for (uint32_t k = 0, plen = 0; plen != leafCnt; k++) {
+        leaf = (rgba_leaf_t*)pctx->leafs[k];
+
+        if (leaf->isValidLeaf) {
+            leaf->count = plen;
+
+            ppal[plen] = clipPackPack(leaf->rgba, pctx->paletteLUT[plen]);
+            ++plen;
+        }
+    }
+
+    pctx->lutLen = leafCnt;
+    return leafCnt;
 }
 
 static int32_t reduceTo(void *ctx, unsigned int maxLeafs, uint32_t **palette)
@@ -445,12 +501,14 @@ static int32_t reduceTo(void *ctx, unsigned int maxLeafs, uint32_t **palette)
                 leaf->rgba[1] += ref->children[cc]->priv->rgba[1] * cf;
                 leaf->rgba[2] += ref->children[cc]->priv->rgba[2] * cf;
                 leaf->rgba[3] += ref->children[cc]->priv->rgba[3] * cf;
+                ref->children[cc]->priv->isValidLeaf = 0;
                 ref->children[cc]->priv->ref = NULL;
                 free(ref->children[cc]);
                 ref->children[cc] = NULL;
                 --leafCnt;
             }
         }
+        leaf->isValidLeaf = 1;
         ++leafCnt; //parent is now a leaf
     }
 
@@ -459,20 +517,14 @@ static int32_t reduceTo(void *ctx, unsigned int maxLeafs, uint32_t **palette)
         return -1;
 
     uint32_t *ppal = *palette;
-    int isLeaf;
     for (uint32_t k = 0, plen = 0; plen != leafCnt; k++) {
         leaf = (rgba_leaf_t*)pctx->leafs[k];
         ref = (hexnode_t*)leaf->ref;
 
-        isLeaf = leaf && ref;
-#ifdef PRIORITIZE_COUNT_OVER_DEPTH
-        isLeaf = isLeaf && (0 == memcmp(&ref->children[1], ref->children, sizeof(hexnode_t*)*(MAX_WIDTH-1)));
-#endif
-        if (isLeaf) {
-            leaf->depth = clipPackPack(leaf->rgba, pctx->paletteLUT[plen]);
+        if (leaf && ref) {
             leaf->count = plen;
-
-            ppal[plen++] = leaf->depth;
+            ppal[plen] = clipPackPack(leaf->rgba, pctx->paletteLUT[plen]);
+            ++plen;
         }
     }
     pctx->lutLen = leafCnt;
@@ -539,10 +591,11 @@ PyObject *hextree_quantize(PyObject *self, PyObject *arg)
 
     if (0 == err) {
         //generate palette
-        plen = reduceTo(ctx, nc, &palette);
+        plen = reduceTo2(ctx, nc, &palette);
         if (plen > 0 && plen <= 256) {
-            if (width)
-                err = generateDitheredBitmap(ctx, &bitmap, rgba, palette, len, plen, width);
+            if (width) {
+                err = generateDitheredBitmap(ctx, &bitmap, rgba, palette, len, (int32_t)plen, width);
+            }
             else
                 err = generateBitmap(ctx, &bitmap, rgba, len, plen);
         } else {
