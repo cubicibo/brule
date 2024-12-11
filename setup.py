@@ -106,7 +106,15 @@ if __name__ == "__main__":
         extra_compile_args=extra_compile_args,
     )
 
-    modules = [brule_codec, layout_eng, hextree]
+    kdkmeans = setuptools.Extension(
+        f"{NAME}._kdmeans",
+        sources=[f"src/{NAME}/_kdmeans.cc"],
+        include_dirs=[np.get_include()],
+        language="c",
+        extra_compile_args=extra_compile_args,
+    )
+
+    modules = [brule_codec, layout_eng, hextree, kdkmeans]
 
     def run_setup(modules):
         setuptools.setup(
@@ -128,7 +136,7 @@ if __name__ == "__main__":
                 'Programming Language :: Python :: 3.9',
             ],
             python_requires='>=3.11',
-            install_requires=["numpy>=2.0.1", "numba", "anytree"],
+            install_requires=["numpy>=2.0.1", "numba", "anytree", "opencv-python"],
             zip_safe=False,
         )
     ####run_setup
