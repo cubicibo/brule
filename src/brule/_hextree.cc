@@ -44,24 +44,25 @@
 #define CLIP(v) (v > 255 ? 255 : (v < 0 ? 0 : v))
 #define CLIPD(d) CLIP(lrint(d))
 #define MIN(a, b) (a < b ? a : b)
+#define MAX(a, b) (a > b ? a : b)
 #define ABS(a) (a < 0 ? -1*a : a)
 #define SIGN(a) (a < 0 ? -1 : 1)
 #define XBIT2ID(val, off, shift) (((val[shift] >> (MAX_DEPTH - 1 - off)) & 0x01) << shift)
 
-static void inline unpackRgba(uint32_t value, DTYPE_ERROR *prgba)
+static void inline unpackRgba(const uint8_t *value, DTYPE_ERROR *prgba)
 {
-    for (uint8_t k = 0; k < 4; k++)
-        prgba[k] = (DTYPE_ERROR)((value >> (8*k)) & 0xFF);
+    prgba[0] = (DTYPE_ERROR)(value[0]);
+    prgba[1] = (DTYPE_ERROR)(value[1]);
+    prgba[2] = (DTYPE_ERROR)(value[2]);
+    prgba[3] = (DTYPE_ERROR)(value[3]);
 }
 
-static uint32_t inline clipPackPack(DTYPE_ERROR *rgba, int32_t *irgba)
+static void inline clipPackPack(const DTYPE_ERROR *rgba, int32_t *irgba, uint8_t *v)
 {
-    uint32_t rval = 0;
-    for (uint8_t k = 0; k < 4; k++) {
-        irgba[k] = 0xFF & CLIPD(rgba[k]);
-        rval |= (irgba[k] << (k*8));
-    }
-    return rval;
+    irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
+    irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
+    irgba[2] = v[2] = (uint8_t)CLIPD(rgba[2]);
+    irgba[3] = v[3] = (uint8_t)CLIPD(rgba[3]);
 }
 
 PyDoc_STRVAR(hextree_quantize_doc, "quantize(bitmap: tuple[NDArray[uint8], int]) -> tuple[NDArray[uint8], NDArray[uint8]]\
@@ -90,9 +91,8 @@ typedef struct ctx_s {
     int16_t lutLen;
 } ctx_t;
 
-static uint8_t inline indexFrom(uint32_t value, uint8_t depth)
+static uint8_t inline indexFrom(const uint8_t *v, const uint8_t depth)
 {
-    uint8_t *v = (uint8_t*)&value;
     return XBIT2ID(v, depth, 0) | XBIT2ID(v, depth, 1) | XBIT2ID(v, depth, 2) | XBIT2ID(v, depth, 3);
 }
 
@@ -130,7 +130,7 @@ static void* init(void)
     return (void*)ctx;
 }
 
-static int insert(void *vctx, uint32_t value)
+static int insert(void *vctx, const uint8_t *value)
 {
     ctx_t *ctx = (ctx_t*)vctx;
 
@@ -175,7 +175,7 @@ static int insert(void *vctx, uint32_t value)
     return 0;
 }
 
-static int32_t inline fetchColour(hexnode_t *cur, uint32_t value)
+static int32_t inline fetchColour(hexnode_t *cur, const uint8_t *value)
 {
     for (uint8_t d = 0, c; d < MAX_DEPTH; d++) {
         c = indexFrom(value, d);
@@ -187,7 +187,7 @@ static int32_t inline fetchColour(hexnode_t *cur, uint32_t value)
     return (int32_t)cur->priv->count;
 }
 
-static int32_t inline testFetchColourLeaf(hexnode_t *cur, uint32_t value)
+static int32_t inline testFetchColourLeaf(hexnode_t *cur, uint8_t *value)
 {
     for (uint8_t d = 0, c; d < MAX_DEPTH; d++) {
         c = indexFrom(value, d);
@@ -202,8 +202,8 @@ static int32_t inline testFetchColourLeaf(hexnode_t *cur, uint32_t value)
     return -1;
 }
 
-#define ERR_THRESH_SKIP (3)
-#define MAX_ERROR_COMPONENT (24)
+#define ERR_THRESH_SKIP (2)
+#define MAX_ERROR_COMPONENT (32)
 #define N_ACTIVE_ROWS_DIFFUSION (3)
 #define ERROR_ROW(y, rl) ((y) % N_ACTIVE_ROWS_DIFFUSION)*(rl)
 #define ERROR_ROW_LOC(y, rl, x) (ERROR_ROW(y, rl) + (x << 2))
@@ -279,16 +279,75 @@ static inline void diffuseSierra(DTYPE_ERROR *errors, DTYPE_ERROR *rgbaErr, uint
 
 #define DITHDIV(x) ((x) / (DTYPE_ERROR)DEN_DITHERING)
 
-static inline int32_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgba)
+#define NORMALIZEC (DTYPE_ERROR)255
+#define DENOM_DIST (DTYPE_ERROR)65025
+#define ALPHAS (a1, a2) (((DTYPE_ERROR)a1 - (DTYPE_ERROR)a2)/NORMALIZEC)
+#define CCDIFF (c1, c2) (((DTYPE_ERROR)c1 - (DTYPE_ERROR)c2)/NORMALIZEC)
+
+static inline int16_t findClosestInPalette2(const ctx_t *ctx, const int32_t *irgba)
+{
+    DTYPE_ERROR dist;
+    DTYPE_ERROR minDist = 100;
+    DTYPE_ERROR diffAlpha, temp;
+    int16_t bestFitId = -1;
+    const int32_t *pEntry = ctx->paletteLUT[0];
+
+    DTYPE_ERROR vp[4];
+    DTYPE_ERROR vr[4];
+    vr[3] = irgba[3]/NORMALIZEC;
+    vr[2] = vr[3]*irgba[2]/NORMALIZEC;
+    vr[1] = vr[3]*irgba[1]/NORMALIZEC;
+    vr[0] = vr[3]*irgba[0]/NORMALIZEC;
+
+    for (int16_t entryId = 0; entryId < ctx->lutLen; ++entryId, ++pEntry) {
+        vp[3] = pEntry[3]/NORMALIZEC;
+        vp[2] = vp[3]*pEntry[2]/NORMALIZEC;
+        vp[1] = vp[3]*pEntry[1]/NORMALIZEC;
+        vp[0] = vp[3]*pEntry[0]/NORMALIZEC;
+
+        diffAlpha = (vp[3] - vr[3]);
+
+        temp = (vp[0]-vr[0]);
+        dist = MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
+
+        temp = (vp[1]-vr[1]);
+        dist += MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
+
+        temp = (vp[2]-vr[2]);
+        dist += MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
+        if (dist < minDist) {
+            minDist = dist;
+            bestFitId = entryId;
+        }
+    }
+    return bestFitId;
+}
+
+static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
+{
+    int32_t diff = (v1[0] - v2[0]);
+    uint32_t dist = diff*diff;
+
+    diff = (v1[1] - v2[1]);
+    dist += diff*diff;
+
+    diff = (v1[2] - v2[2]);
+    dist += diff*diff;
+    return dist;
+}
+
+static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgba)
 {
     uint32_t minDist = 4*256*256;
     int16_t bestFitId = -1;
+    const int32_t *pEntry;
+
     for (int16_t paletteEntryId = 0; paletteEntryId < ctx->lutLen; ++paletteEntryId) {
-        uint32_t dist = 0;
-        for (uint8_t k = 0; k < 4; k++) {
-            int32_t diff = ctx->paletteLUT[paletteEntryId][k] - irgba[k];
-            dist += diff*diff;
-        }
+        uint32_t dist = colorDist(ctx->paletteLUT[paletteEntryId], irgba);
+
+        int32_t diff = (ctx->paletteLUT[paletteEntryId][3] - irgba[3]);
+        dist = (uint32_t)((diff*diff)/(DTYPE_ERROR)1.5 + ((DTYPE_ERROR)dist*((irgba[3]*ctx->paletteLUT[paletteEntryId][3]/(DTYPE_ERROR)1953810))));
+
         if (dist < minDist) {
             minDist = dist;
             bestFitId = paletteEntryId;
@@ -297,8 +356,8 @@ static inline int32_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgb
     return bestFitId;
 }
 
-static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uint32_t *rgba, const uint32_t *palette,
-                                   const size_t len, const uint32_t plen, const uint32_t width )
+static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uint8_t *rgba,
+                                   const size_t len, const int16_t plen, const uint32_t width )
 {
     const ctx_t *ctx = (const ctx_t*)vctx;
     const uint32_t rowLen = width << 2;
@@ -314,11 +373,13 @@ static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uin
 
     DTYPE_ERROR sErr, rgbaOrg[4], rgbaErr[4];
     int32_t paletteEntryId, irgba[4];
-    uint32_t crgba;
+    uint8_t crgba[4];
+    const uint8_t *rgbaPixel;
     
     for (uint32_t y = 0, lineId = 0; y < len; y += width, ++lineId) {
         for (uint32_t x = 0; x < width; ++x) {
             pErrors = &errors[ERROR_ROW_LOC(lineId, rowLen, x)];
+            rgbaPixel = &rgba[(y + x) << 2];
 
             sErr = 0;
             for (uint8_t k = 0; k < 4; k++) {
@@ -326,13 +387,16 @@ static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uin
                 sErr += pErrors[k]*pErrors[k];
             }
 
-            unpackRgba(rgba[y + x], rgbaOrg);
+            unpackRgba(rgbaPixel, rgbaOrg);
             if (sErr > (DTYPE_ERROR)ERR_THRESH_SKIP) {
                 //Add the residual error to the image pixel
                 ADDERROR(rgbaOrg, pErrors);
-                crgba = clipPackPack(rgbaOrg, irgba);
+                clipPackPack(rgbaOrg, irgba, crgba);
             } else {
-                crgba = rgba[y + x];
+                crgba[0] = rgbaPixel[0];
+                crgba[1] = rgbaPixel[1];
+                crgba[2] = rgbaPixel[2];
+                crgba[3] = rgbaPixel[3];
             }
             //reset error accumulator of pixel
             memset(pErrors, 0, sizeof(rgbaErr));
@@ -377,7 +441,7 @@ static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uin
     return 0;
 }
 
-static int generateBitmap(const void* vctx, uint8_t** bitmap, const uint32_t* rgba, const size_t len, const uint32_t plen)
+static int generateBitmap(const void* vctx, uint8_t** bitmap, const uint8_t* rgba, const size_t len, const uint32_t plen)
 {
     const ctx_t *ctx = (const ctx_t*)vctx;
     hexnode_t *cur = ctx->root;
@@ -388,7 +452,7 @@ static int generateBitmap(const void* vctx, uint8_t** bitmap, const uint32_t* rg
 
     uint32_t value;
     for (size_t k = 0; k < len; k++) {
-        value = (uint32_t)fetchColour(ctx->root, rgba[k]);
+        value = (uint32_t)fetchColour(ctx->root, &rgba[k<<2]);
 
         //All pixels are unmodified, all tree look-ups shall always lend on a leaf (value < plen)
         if (value >= plen)
@@ -416,7 +480,7 @@ static int cmpleafs(const void* e1, const void* e2)
 #endif
 }
 
-static int32_t reduceTo(void *ctx, unsigned int maxLeafs, uint32_t **palette)
+static int32_t reduceTo(void *ctx, unsigned int maxLeafs, uint8_t **palette)
 {
     ctx_t *pctx = (ctx_t*)ctx;
     hexnode_t *ref;
@@ -454,25 +518,20 @@ static int32_t reduceTo(void *ctx, unsigned int maxLeafs, uint32_t **palette)
         ++leafCnt; //parent is now a leaf
     }
 
-    *palette = (uint32_t*)calloc(leafCnt, sizeof(uint32_t));
+    *palette = (uint8_t*)calloc(leafCnt << 2, sizeof(uint8_t));
     if (!palette)
         return -1;
 
-    uint32_t *ppal = *palette;
-    int isLeaf;
+
+    uint8_t *pal = *palette;
     for (uint32_t k = 0, plen = 0; plen != leafCnt; k++) {
         leaf = (rgba_leaf_t*)pctx->leafs[k];
         ref = (hexnode_t*)leaf->ref;
 
-        isLeaf = leaf && ref;
-#ifdef PRIORITIZE_COUNT_OVER_DEPTH
-        isLeaf = isLeaf && (0 == memcmp(&ref->children[1], ref->children, sizeof(hexnode_t*)*(MAX_WIDTH-1)));
-#endif
-        if (isLeaf) {
-            leaf->depth = clipPackPack(leaf->rgba, pctx->paletteLUT[plen]);
+        if (leaf && ref) {
+            clipPackPack(leaf->rgba, pctx->paletteLUT[plen], &pal[plen << 2]);
             leaf->count = plen;
-
-            ppal[plen++] = leaf->depth;
+            ++plen;
         }
     }
     pctx->lutLen = leafCnt;
@@ -506,6 +565,7 @@ PyObject *hextree_quantize(PyObject *self, PyObject *arg)
 
     PyArrayObject *arr = (PyArrayObject*)pai;
     size_t len = PyArray_DIM(arr, 0);
+    size_t rawLen = len;
 
     //Not flat or not mod4
     if (PyArray_NDIM(arr) != 1 || (len & 0b11))
@@ -518,7 +578,7 @@ PyObject *hextree_quantize(PyObject *self, PyObject *arg)
     if (0 == (NPY_ARRAY_ALIGNED & PyArray_FLAGS(arr)))
         return NULL;
 
-    const uint32_t *rgba = (const uint32_t*)PyArray_BYTES(arr);
+    const uint8_t *rgba = (const uint8_t*)PyArray_BYTES(arr);
 
     if (width > len || (width > 0 && len % width) || width > 8192)
         return NULL;
@@ -527,11 +587,11 @@ PyObject *hextree_quantize(PyObject *self, PyObject *arg)
 
     //catalog
     void *ctx = init();
-    for (size_t k = 0; k < len && 0 == err; ++k)
-        err = insert(ctx, rgba[k]);
+    for (size_t k = 0; k < rawLen && 0 == err; k += 4)
+        err = insert(ctx, &rgba[k]);
 
     //returned objects
-    uint32_t *palette = NULL;
+    uint8_t *palette = NULL;
     uint8_t *bitmap = NULL;
     PyObject *rtup = NULL;
     PyArrayObject *arr_bitmap = NULL, *arr_pal = NULL;
@@ -542,7 +602,7 @@ PyObject *hextree_quantize(PyObject *self, PyObject *arg)
         plen = reduceTo(ctx, nc, &palette);
         if (plen > 0 && plen <= 256) {
             if (width)
-                err = generateDitheredBitmap(ctx, &bitmap, rgba, palette, len, plen, width);
+                err = generateDitheredBitmap(ctx, &bitmap, rgba, len, (int16_t)plen, width);
             else
                 err = generateBitmap(ctx, &bitmap, rgba, len, plen);
         } else {
