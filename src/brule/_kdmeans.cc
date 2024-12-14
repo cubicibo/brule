@@ -84,6 +84,7 @@ Quantize input RGBA and return (bitmap, palette).");
 
 typedef struct rgba_leaf_s {
     int32_t cc[N_COMPONENTS];
+    DTYPE_ERROR ccf[N_COMPONENTS];
     uint32_t count;
     int16_t aci;
 } leaf_data_t;
@@ -99,6 +100,7 @@ typedef struct ctx_s {
     uint32_t nLeafs;
     uint32_t nLeafsMax;
     int32_t centroids[MAX_ENTRIES][N_COMPONENTS];
+    DTYPE_ERROR fpalette[MAX_ENTRIES][N_COMPONENTS];
     uint16_t nc;
 } ctx_t;
 
@@ -167,6 +169,7 @@ static int insert(ctx_t *ctx, const uint8_t *value)
                 }
                 ctx->leafs[ctx->nLeafs++] = child->priv;
                 unpackRgba(value, child->priv->cc);
+                unpackRgbaFp(value, child->priv->ccf);
             }
             node->children[c] = child;
         }
@@ -190,6 +193,10 @@ static void init_centroids(ctx_t *ctx, const size_t len)
             ctx->leafs[k]->count = maxLen;
         if (k == nextSample) {
             memcpy(ctx->centroids[cid], ctx->leafs[k]->cc, sizeof(int32_t)*N_COMPONENTS);
+            ctx->fpalette[cid][3] = ((DTYPE_ERROR)ctx->centroids[cid][3])/(DTYPE_ERROR)255;
+            ctx->fpalette[cid][0] = ctx->fpalette[cid][3] * (((DTYPE_ERROR)ctx->centroids[cid][0])/(DTYPE_ERROR)255);
+            ctx->fpalette[cid][1] = ctx->fpalette[cid][3] * (((DTYPE_ERROR)ctx->centroids[cid][1])/(DTYPE_ERROR)255);
+            ctx->fpalette[cid][2] = ctx->fpalette[cid][3] * (((DTYPE_ERROR)ctx->centroids[cid][2])/(DTYPE_ERROR)255);
             nextSample += ((++cid >= ctx->nc) ? 0 : strideSample);
         }
 
@@ -207,6 +214,21 @@ static uint32_t inline computeCentroidComponentAndDiff(int32_t *centroidComponen
         return adiff*adiff;
     }
     return 0;
+}
+
+static inline DTYPE_ERROR colorDist2(const DTYPE_ERROR *v1, const DTYPE_ERROR *v2)
+{
+    DTYPE_ERROR diffAlpha = (v1[3] - v2[3]);
+
+    DTYPE_ERROR temp = (v1[0]-v2[0]);
+    DTYPE_ERROR dist = MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
+
+    temp = (v1[1]-v2[1]);
+    dist += MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
+
+    temp = (v1[2]-v2[2]);
+    dist += MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
+    return dist;
 }
 
 static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
@@ -227,8 +249,8 @@ static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
 
 static uint32_t kmeans_assign_update(ctx_t *ctx)
 {
-    uint32_t cdist, bdist, utemp;
-    int32_t stemp;
+    DTYPE_ERROR cdist, bdist;
+    uint32_t utemp;
     int16_t bcid;
     uint32_t newCentroids[MAX_ENTRIES][N_COMPONENTS] = {{0}};
     uint32_t countPerCentroid[MAX_ENTRIES] = {0};
@@ -258,6 +280,11 @@ static uint32_t kmeans_assign_update(ctx_t *ctx)
         tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][1], newCentroids[k][1], countPerCentroid[k]);
         tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][2], newCentroids[k][2], countPerCentroid[k]);
         tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][3], newCentroids[k][3], countPerCentroid[k]);
+
+        ctx->fpalette[k][3] = ((DTYPE_ERROR)ctx->centroids[k][3])/(DTYPE_ERROR)255;
+        ctx->fpalette[k][0] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][0])/(DTYPE_ERROR)255);
+        ctx->fpalette[k][1] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][1])/(DTYPE_ERROR)255);
+        ctx->fpalette[k][2] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][2])/(DTYPE_ERROR)255);
     }
     return (uint32_t)(tdiff/ctx->nc);
 }
@@ -283,22 +310,6 @@ static int16_t inline testFetchPaletteId(hexnode_t *cur, const uint8_t *value)
     return (uint8_t)cur->priv->aci;
 }
 
-static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgba)
-{
-    uint32_t minDist = 4*256*256;
-    int16_t bestFitId = -1;
-
-    for (int16_t cid = 0; cid < ctx->nc; ++cid) {
-        uint32_t dist = colorDist(ctx->centroids[cid], irgba);
-
-        if (dist < minDist) {
-            minDist = dist;
-            bestFitId = cid;
-        }
-    }
-    return bestFitId;
-}
-
 #define ERR_THRESH_SKIP (2)
 #define MAX_ERROR_COMPONENT (24)
 #define N_ACTIVE_ROWS_DIFFUSION (3)
@@ -315,7 +326,29 @@ static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgb
 #define DEN_DITHERING (8)
 #define DITHDIV(x) ((x) / ((DTYPE_ERROR)DEN_DITHERING))
 
-static int generateDitheredBitmap(const ctx_t *ctx, uint8_t **bitmap, const uint8_t *rgba, const size_t len, const uint32_t width)
+static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgba)
+{
+    DTYPE_ERROR minDist = 4*256*256;
+    int16_t bestFitId = -1;
+
+    DTYPE_ERROR v[4];
+    v[3] = ((DTYPE_ERROR)irgba[3])/(DTYPE_ERROR)255;
+    v[0] = v[3] * ((DTYPE_ERROR)irgba[0])/(DTYPE_ERROR)255;
+    v[1] = v[3] * ((DTYPE_ERROR)irgba[1])/(DTYPE_ERROR)255;
+    v[2] = v[3] * ((DTYPE_ERROR)irgba[2])/(DTYPE_ERROR)255;
+
+    for (int16_t cid = 0; cid < ctx->nc; ++cid) {
+        DTYPE_ERROR dist = colorDist2(v, ctx->fpalette[cid]);
+
+        if (dist < minDist) {
+            minDist = dist;
+            bestFitId = cid;
+        }
+    }
+    return bestFitId;
+}
+
+static int generateDitheredBitmap(ctx_t *ctx, uint8_t **bitmap, const uint8_t *rgba, const size_t len, const uint32_t width)
 {
     const uint32_t rowLen = width << 2;
     const uint32_t errArrLen = (width << 2) * N_ACTIVE_ROWS_DIFFUSION;
@@ -332,7 +365,7 @@ static int generateDitheredBitmap(const ctx_t *ctx, uint8_t **bitmap, const uint
     int32_t paletteEntryId, irgba[4];
     uint8_t crgba[4];
     const uint8_t *pix;
-    
+
     for (uint32_t y = 0, lineId = 0; y < len; y += width, ++lineId) {
         for (uint32_t x = 0; x < width; ++x) {
             pix = &rgba[(y+x) << 2];
