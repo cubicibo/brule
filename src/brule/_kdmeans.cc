@@ -45,32 +45,38 @@
 #define XBIT2ID(val, off, shift) (((val[shift] >> (MAX_DEPTH - 1 - off)) & 0x01) << shift)
 #define DTYPE_ERROR float
 
-static void inline unpackRgbaFp(uint32_t value, DTYPE_ERROR *prgba)
+static void inline clipPackPack(const DTYPE_ERROR *rgba, int32_t *irgba, uint8_t *v)
 {
-    for (uint8_t k = 0; k < N_COMPONENTS; k++)
-        prgba[k] = (DTYPE_ERROR)((value >> (8*k)) & 0xFF);
+    irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
+    irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
+    irgba[2] = v[2] = (uint8_t)CLIPD(rgba[2]);
+    irgba[3] = v[3] = (uint8_t)CLIPD(rgba[3]);
 }
 
-static void inline unpackRgba(uint32_t value, int32_t *prgba)
+static void inline unpackRgbaFp(const uint8_t *v, DTYPE_ERROR *prgba)
 {
-    for (uint8_t k = 0; k < N_COMPONENTS; k++)
-        prgba[k] = (int32_t)((value >> (8*k)) & 0xFF);
+    prgba[0] = (DTYPE_ERROR)v[0];
+    prgba[1] = (DTYPE_ERROR)v[1];
+    prgba[2] = (DTYPE_ERROR)v[2];
+    prgba[3] = (DTYPE_ERROR)v[3];
 }
 
-static uint32_t inline packRgba(const int32_t *prgba)
+static void inline unpackRgba(const uint8_t *value, int32_t *prgba)
 {
-    return prgba[0] | (prgba[1] << 8) | (prgba[2] << 16) | (prgba[3] << 24);
+    prgba[0] = (int32_t)value[0];
+    prgba[1] = (int32_t)value[1];
+    prgba[2] = (int32_t)value[2];
+    prgba[3] = (int32_t)value[3];
 }
 
-static uint32_t inline clipPackPack(DTYPE_ERROR *rgba, int32_t *irgba)
+static void inline packRgba(uint8_t *v, const int32_t *prgba)
 {
-    uint32_t rval = 0;
-    for (uint8_t k = 0; k < 4; k++) {
-        irgba[k] = 0xFF & CLIPD(rgba[k]);
-        rval |= (irgba[k] << (k*8));
-    }
-    return rval;
+    v[0] = prgba[0];
+    v[1] = prgba[1];
+    v[2] = prgba[2];
+    v[3] = prgba[3];
 }
+
 
 PyDoc_STRVAR(kdmeans_quantize_doc, "quantize(data: tuple[ndarray[uint8], int]) -> tuple[ndarray[uint8], ndarray[uint8]]\
 \
@@ -97,9 +103,8 @@ typedef struct ctx_s {
 } ctx_t;
 
 #if (N_COMPONENTS == 4)
-static uint8_t inline indexFrom(const uint32_t value, const uint8_t depth)
+static uint8_t inline indexFrom(const uint8_t *v, const uint8_t depth)
 {
-    const uint8_t *v = (const uint8_t*)&value;
     return XBIT2ID(v, depth, 0) | XBIT2ID(v, depth, 1) | XBIT2ID(v, depth, 2) | XBIT2ID(v, depth, 3);
 }
 #else
@@ -132,7 +137,7 @@ static ctx_t* init(void)
     return ctx;
 }
 
-static int insert(ctx_t *ctx, uint32_t value)
+static int insert(ctx_t *ctx, const uint8_t *value)
 {
     hexnode_t *child;
     hexnode_t *node = ctx->root;
@@ -174,11 +179,15 @@ static int insert(ctx_t *ctx, uint32_t value)
 static void init_centroids(ctx_t *ctx, const size_t len)
 {
     const int32_t strideSample = (int32_t)lrint(ctx->nLeafs/(float)ctx->nc);
-    int32_t nextSample = 0;
+    uint32_t nextSample = 0;
     int cid = 0;
+    uint32_t maxLen = len/10;
 
     const int32_t avgCount = (int32_t)lrint((double)len/(double)ctx->nLeafs);
     for (uint32_t k = 0; k < ctx->nLeafs; ++k) {
+        //Avoid large bias on single colour
+        if (ctx->leafs[k]->count > maxLen)
+            ctx->leafs[k]->count = maxLen;
         if (k == nextSample) {
             memcpy(ctx->centroids[cid], ctx->leafs[k]->cc, sizeof(int32_t)*N_COMPONENTS);
             nextSample += ((++cid >= ctx->nc) ? 0 : strideSample);
@@ -200,6 +209,22 @@ static uint32_t inline computeCentroidComponentAndDiff(int32_t *centroidComponen
     return 0;
 }
 
+static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
+{
+    int32_t diff = (v1[0] - v2[0]);
+    uint32_t dist = diff*diff;
+
+    diff = (v1[1] - v2[1]);
+    dist += diff*diff;
+
+    diff = (v1[2] - v2[2]);
+    dist += diff*diff;
+
+    diff = (v1[3] - v2[3]);
+    //1953810 = 255*255*3
+    return (uint32_t)((diff*diff)/(DTYPE_ERROR)1.5 + ((DTYPE_ERROR)dist*((v1[3]*v2[3]/(DTYPE_ERROR)1953810))));
+}
+
 static uint32_t kmeans_assign_update(ctx_t *ctx)
 {
     uint32_t cdist, bdist, utemp;
@@ -211,11 +236,7 @@ static uint32_t kmeans_assign_update(ctx_t *ctx)
     for (uint32_t k = 0; k < ctx->nLeafs; ++k) {
         bdist = (uint32_t)(-1);
         for (int16_t cid = 0; cid < ctx->nc; ++cid) {
-            cdist = 0;
-            for (uint8_t j = 0; j < N_COMPONENTS; ++j) {
-                stemp = (ctx->leafs[k]->cc[j] - ctx->centroids[cid][j]);
-                cdist += (uint32_t)(stemp*stemp);
-            }
+            cdist = colorDist(ctx->leafs[k]->cc, ctx->centroids[cid]);
             if (bdist > cdist) {
                 bcid = cid;
                 bdist = cdist;
@@ -241,7 +262,7 @@ static uint32_t kmeans_assign_update(ctx_t *ctx)
     return (uint32_t)(tdiff/ctx->nc);
 }
 
-static uint8_t inline fetchPaletteId(hexnode_t *cur, uint32_t value)
+static uint8_t inline fetchPaletteId(hexnode_t *cur, const uint8_t *value)
 {
     //unsafe, use only if value is guaranteed to be in array
     for (uint8_t d = 0; d < MAX_DEPTH; d++)
@@ -249,7 +270,7 @@ static uint8_t inline fetchPaletteId(hexnode_t *cur, uint32_t value)
     return (uint8_t)cur->priv->aci;
 }
 
-static int16_t inline testFetchPaletteId(hexnode_t *cur, const uint32_t value)
+static int16_t inline testFetchPaletteId(hexnode_t *cur, const uint8_t *value)
 {
     //unsafe, use only if value is guaranteed to be in array
     for (uint8_t d = 0, c; d < MAX_DEPTH; d++) {
@@ -262,26 +283,24 @@ static int16_t inline testFetchPaletteId(hexnode_t *cur, const uint32_t value)
     return (uint8_t)cur->priv->aci;
 }
 
-static inline int32_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgba)
+static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgba)
 {
     uint32_t minDist = 4*256*256;
     int16_t bestFitId = -1;
-    for (int16_t paletteEntryId = 0; paletteEntryId < ctx->nc; ++paletteEntryId) {
-        uint32_t dist = 0;
-        for (uint8_t k = 0; k < 4; k++) {
-            int32_t diff = ctx->centroids[paletteEntryId][k] - irgba[k];
-            dist += diff*diff;
-        }
+
+    for (int16_t cid = 0; cid < ctx->nc; ++cid) {
+        uint32_t dist = colorDist(ctx->centroids[cid], irgba);
+
         if (dist < minDist) {
             minDist = dist;
-            bestFitId = paletteEntryId;
+            bestFitId = cid;
         }
     }
     return bestFitId;
 }
 
-#define ERR_THRESH_SKIP (3)
-#define MAX_ERROR_COMPONENT (36)
+#define ERR_THRESH_SKIP (2)
+#define MAX_ERROR_COMPONENT (24)
 #define N_ACTIVE_ROWS_DIFFUSION (3)
 #define ERROR_ROW(y, rl) ((y) % N_ACTIVE_ROWS_DIFFUSION)*(rl)
 #define ERROR_ROW_LOC(y, rl, x) (ERROR_ROW(y, rl) + (x << 2))
@@ -296,7 +315,7 @@ static inline int32_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgb
 #define DEN_DITHERING (8)
 #define DITHDIV(x) ((x) / ((DTYPE_ERROR)DEN_DITHERING))
 
-static int generateDitheredBitmap(const ctx_t *ctx, uint8_t **bitmap, const uint32_t *rgba, const size_t len, const uint32_t width)
+static int generateDitheredBitmap(const ctx_t *ctx, uint8_t **bitmap, const uint8_t *rgba, const size_t len, const uint32_t width)
 {
     const uint32_t rowLen = width << 2;
     const uint32_t errArrLen = (width << 2) * N_ACTIVE_ROWS_DIFFUSION;
@@ -311,10 +330,12 @@ static int generateDitheredBitmap(const ctx_t *ctx, uint8_t **bitmap, const uint
 
     DTYPE_ERROR sErr, rgbaOrg[4], rgbaErr[4];
     int32_t paletteEntryId, irgba[4];
-    uint32_t crgba;
+    uint8_t crgba[4];
+    const uint8_t *pix;
     
     for (uint32_t y = 0, lineId = 0; y < len; y += width, ++lineId) {
         for (uint32_t x = 0; x < width; ++x) {
+            pix = &rgba[(y+x) << 2];
             pErrors = &errors[ERROR_ROW_LOC(lineId, rowLen, x)];
 
             sErr = 0;
@@ -323,13 +344,16 @@ static int generateDitheredBitmap(const ctx_t *ctx, uint8_t **bitmap, const uint
                 sErr += pErrors[k]*pErrors[k];
             }
 
-            unpackRgbaFp(rgba[y + x], rgbaOrg);
+            unpackRgbaFp(pix, rgbaOrg);
             if (sErr > (DTYPE_ERROR)ERR_THRESH_SKIP) {
                 //Add the residual error to the image pixel
                 ADDERROR(rgbaOrg, pErrors);
-                crgba = clipPackPack(rgbaOrg, irgba);
+                clipPackPack(rgbaOrg, irgba, crgba);
             } else {
-                crgba = rgba[y + x];
+                crgba[0] = pix[0];
+                crgba[1] = pix[1];
+                crgba[2] = pix[2];
+                crgba[3] = pix[3];
             }
             //reset error accumulator of pixel
             memset(pErrors, 0, sizeof(rgbaErr));
@@ -365,7 +389,7 @@ static int generateDitheredBitmap(const ctx_t *ctx, uint8_t **bitmap, const uint
     return 0;
 }
 
-static int generateBitmap(const ctx_t *ctx, uint8_t** bitmap, const uint32_t* rgba, const size_t len)
+static int generateBitmap(const ctx_t *ctx, uint8_t** bitmap, const uint8_t* rgba, const size_t len)
 {
     hexnode_t *cur = ctx->root;
 
@@ -374,7 +398,7 @@ static int generateBitmap(const ctx_t *ctx, uint8_t** bitmap, const uint32_t* rg
         return -1;
 
     for (size_t k = 0; k < len; k++)
-        (*bitmap)[k] = fetchPaletteId(ctx->root, rgba[k]);
+        (*bitmap)[k] = fetchPaletteId(ctx->root, &rgba[k<<2]);
     return 0;
 }
 
@@ -409,6 +433,7 @@ PyObject *kdmeans_quantize(PyObject *self, PyObject *arg)
     //Not flat or not mod4
     if (PyArray_NDIM(arr) != 1 || (len & 0b11))
         return NULL;
+    size_t rawLen = len;
     len >>= 2;
 
     //8 MiB is an arbitrary limitation to not overflow
@@ -421,18 +446,18 @@ PyObject *kdmeans_quantize(PyObject *self, PyObject *arg)
     if (0 == (NPY_ARRAY_ALIGNED & PyArray_FLAGS(arr)))
         return NULL;
 
-    const uint32_t *rgba = (const uint32_t*)PyArray_BYTES(arr);
+    const uint8_t *rgba = (const uint8_t*)PyArray_BYTES(arr);
     int err = 0;
 
     //catalog
     ctx_t *ctx = init();
-    for (size_t k = 0; k < len && !err; ++k)
-        err = insert(ctx, rgba[k]);
+    for (size_t k = 0; k < rawLen && !err; k += 4)
+        err = insert(ctx, &rgba[k]);
 
     ctx->nc = (uint16_t)MIN(nc, ctx->nLeafs);
 
     //returned objects
-    uint32_t *palette = (uint32_t*)calloc(ctx->nc, sizeof(uint32_t));
+    uint8_t *palette = (uint8_t*)calloc(N_COMPONENTS*ctx->nc, sizeof(uint8_t));
     uint8_t *bitmap = NULL;
     PyObject *rtup = NULL;
     PyArrayObject *arr_bitmap = NULL, *arr_pal = NULL;
@@ -460,8 +485,9 @@ PyObject *kdmeans_quantize(PyObject *self, PyObject *arg)
         else
             err = generateBitmap(ctx, &bitmap, rgba, len);
         if (0 == err) {
-            for (uint16_t k = 0; k < ctx->nc; ++k)
-                palette[k] = packRgba(ctx->centroids[k]);
+            for (uint16_t k = 0; k < ctx->nc; ++k) {
+                packRgba(&palette[k<<2], ctx->centroids[k]);
+            }
         }
     }
     //generate bitmap
