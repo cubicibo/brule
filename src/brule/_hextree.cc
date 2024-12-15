@@ -59,10 +59,16 @@ static void inline unpackRgba(const uint8_t *value, DTYPE_ERROR *prgba)
 
 static void inline clipPackPack(const DTYPE_ERROR *rgba, int32_t *irgba, uint8_t *v)
 {
-    irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
-    irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
-    irgba[2] = v[2] = (uint8_t)CLIPD(rgba[2]);
     irgba[3] = v[3] = (uint8_t)CLIPD(rgba[3]);
+    if (irgba[3] > 0) {
+        irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
+        irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
+        irgba[2] = v[2] = (uint8_t)CLIPD(rgba[2]);
+    } else {
+        irgba[0] = v[0] = 0;
+        irgba[1] = v[1] = 0;
+        irgba[2] = v[2] = 0;
+    }
 }
 
 PyDoc_STRVAR(hextree_quantize_doc, "quantize(bitmap: tuple[NDArray[uint8], int]) -> tuple[NDArray[uint8], NDArray[uint8]]\
@@ -93,7 +99,7 @@ typedef struct ctx_s {
 
 static uint8_t inline indexFrom(const uint8_t *v, const uint8_t depth)
 {
-    return XBIT2ID(v, depth, 0) | XBIT2ID(v, depth, 1) | XBIT2ID(v, depth, 2) | XBIT2ID(v, depth, 3);
+    return (XBIT2ID(v, depth, 0) | XBIT2ID(v, depth, 1) | XBIT2ID(v, depth, 2) | XBIT2ID(v, depth, 3)) * (v[3] > 0);
 }
 
 static void flush(hexnode_t *current)
@@ -279,50 +285,6 @@ static inline void diffuseSierra(DTYPE_ERROR *errors, DTYPE_ERROR *rgbaErr, uint
 
 #define DITHDIV(x) ((x) / (DTYPE_ERROR)DEN_DITHERING)
 
-#define NORMALIZEC (DTYPE_ERROR)255
-#define DENOM_DIST (DTYPE_ERROR)65025
-#define ALPHAS (a1, a2) (((DTYPE_ERROR)a1 - (DTYPE_ERROR)a2)/NORMALIZEC)
-#define CCDIFF (c1, c2) (((DTYPE_ERROR)c1 - (DTYPE_ERROR)c2)/NORMALIZEC)
-
-static inline int16_t findClosestInPalette2(const ctx_t *ctx, const int32_t *irgba)
-{
-    DTYPE_ERROR dist;
-    DTYPE_ERROR minDist = 100;
-    DTYPE_ERROR diffAlpha, temp;
-    int16_t bestFitId = -1;
-    const int32_t *pEntry = ctx->paletteLUT[0];
-
-    DTYPE_ERROR vp[4];
-    DTYPE_ERROR vr[4];
-    vr[3] = irgba[3]/NORMALIZEC;
-    vr[2] = vr[3]*irgba[2]/NORMALIZEC;
-    vr[1] = vr[3]*irgba[1]/NORMALIZEC;
-    vr[0] = vr[3]*irgba[0]/NORMALIZEC;
-
-    for (int16_t entryId = 0; entryId < ctx->lutLen; ++entryId, ++pEntry) {
-        vp[3] = pEntry[3]/NORMALIZEC;
-        vp[2] = vp[3]*pEntry[2]/NORMALIZEC;
-        vp[1] = vp[3]*pEntry[1]/NORMALIZEC;
-        vp[0] = vp[3]*pEntry[0]/NORMALIZEC;
-
-        diffAlpha = (vp[3] - vr[3]);
-
-        temp = (vp[0]-vr[0]);
-        dist = MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
-
-        temp = (vp[1]-vr[1]);
-        dist += MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
-
-        temp = (vp[2]-vr[2]);
-        dist += MAX(temp*temp, (temp - diffAlpha)*(temp - diffAlpha));
-        if (dist < minDist) {
-            minDist = dist;
-            bestFitId = entryId;
-        }
-    }
-    return bestFitId;
-}
-
 static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
 {
     int32_t diff = (v1[0] - v2[0]);
@@ -393,10 +355,14 @@ static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uin
                 ADDERROR(rgbaOrg, pErrors);
                 clipPackPack(rgbaOrg, irgba, crgba);
             } else {
-                crgba[0] = rgbaPixel[0];
-                crgba[1] = rgbaPixel[1];
-                crgba[2] = rgbaPixel[2];
                 crgba[3] = rgbaPixel[3];
+                if (0 < crgba[3]) {
+                    crgba[2] = rgbaPixel[2];
+                    crgba[1] = rgbaPixel[1];
+                    crgba[0] = rgbaPixel[0];
+                } else {
+                    crgba[0] = crgba[1] = crgba[2] = 0;
+                }
             }
             //reset error accumulator of pixel
             memset(pErrors, 0, sizeof(rgbaErr));

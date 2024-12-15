@@ -47,10 +47,16 @@
 
 static void inline clipPackPack(const DTYPE_ERROR *rgba, int32_t *irgba, uint8_t *v)
 {
-    irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
-    irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
-    irgba[2] = v[2] = (uint8_t)CLIPD(rgba[2]);
     irgba[3] = v[3] = (uint8_t)CLIPD(rgba[3]);
+    if (irgba[3] > 0) {
+        irgba[2] = v[2] = (uint8_t)CLIPD(rgba[2]);
+        irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
+        irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
+    } else {
+        irgba[2] = v[2] = 0;
+        irgba[1] = v[1] = 0;
+        irgba[0] = v[0] = 0;
+    }
 }
 
 static void inline unpackRgbaFp(const uint8_t *v, DTYPE_ERROR *prgba)
@@ -398,10 +404,14 @@ static int generateDitheredBitmap(ctx_t *ctx, uint8_t **bitmap, const uint8_t *r
                 ADDERROR(rgbaOrg, pErrors);
                 clipPackPack(rgbaOrg, irgba, crgba);
             } else {
-                crgba[0] = pix[0];
-                crgba[1] = pix[1];
-                crgba[2] = pix[2];
                 crgba[3] = pix[3];
+                if (0 < crgba[3]) {
+                    crgba[2] = pix[2];
+                    crgba[1] = pix[1];
+                    crgba[0] = pix[0];
+                } else {
+                    crgba[0] = crgba[1] = crgba[2] = 0;
+                }
             }
             //reset error accumulator of pixel
             memset(pErrors, 0, sizeof(rgbaErr));
