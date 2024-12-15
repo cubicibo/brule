@@ -107,7 +107,7 @@ typedef struct ctx_s {
 #if (N_COMPONENTS == 4)
 static uint8_t inline indexFrom(const uint8_t *v, const uint8_t depth)
 {
-    return XBIT2ID(v, depth, 0) | XBIT2ID(v, depth, 1) | XBIT2ID(v, depth, 2) | XBIT2ID(v, depth, 3);
+    return (XBIT2ID(v, depth, 0) | XBIT2ID(v, depth, 1) | XBIT2ID(v, depth, 2) | XBIT2ID(v, depth, 3)) * (v[3] > 0);
 }
 #else
 # error "No indexer for CC != 4."
@@ -170,6 +170,11 @@ static int insert(ctx_t *ctx, const uint8_t *value)
                 ctx->leafs[ctx->nLeafs++] = child->priv;
                 unpackRgba(value, child->priv->cc);
                 unpackRgbaFp(value, child->priv->ccf);
+                child->priv->ccf[3] = ((DTYPE_ERROR)child->priv->ccf[3])/(DTYPE_ERROR)255;
+                child->priv->ccf[0] = child->priv->ccf[3] * (((DTYPE_ERROR)child->priv->ccf[0])/(DTYPE_ERROR)255);
+                child->priv->ccf[1] = child->priv->ccf[3] * (((DTYPE_ERROR)child->priv->ccf[1])/(DTYPE_ERROR)255);
+                child->priv->ccf[2] = child->priv->ccf[3] * (((DTYPE_ERROR)child->priv->ccf[2])/(DTYPE_ERROR)255);
+
             }
             node->children[c] = child;
         }
@@ -183,7 +188,7 @@ static void init_centroids(ctx_t *ctx, const size_t len)
 {
     const int32_t strideSample = (int32_t)lrint(ctx->nLeafs/(float)ctx->nc);
     uint32_t nextSample = 0;
-    int cid = 0;
+    int cid = 0, tspSeen = 0;
     uint32_t maxLen = len/10;
 
     const int32_t avgCount = (int32_t)lrint((double)len/(double)ctx->nLeafs);
@@ -191,8 +196,14 @@ static void init_centroids(ctx_t *ctx, const size_t len)
         //Avoid large bias on single colour
         if (ctx->leafs[k]->count > maxLen)
             ctx->leafs[k]->count = maxLen;
+
         if (k == nextSample) {
-            memcpy(ctx->centroids[cid], ctx->leafs[k]->cc, sizeof(int32_t)*N_COMPONENTS);
+            if (0 == ctx->centroids[cid][3])
+                tspSeen = 1;
+            if (!tspSeen && cid-1 >= ctx->nc)
+                memset(ctx->centroids[cid], 0, sizeof(int32_t)*N_COMPONENTS);
+            else
+                memcpy(ctx->centroids[cid], ctx->leafs[k]->cc, sizeof(int32_t)*N_COMPONENTS);
             ctx->fpalette[cid][3] = ((DTYPE_ERROR)ctx->centroids[cid][3])/(DTYPE_ERROR)255;
             ctx->fpalette[cid][0] = ctx->fpalette[cid][3] * (((DTYPE_ERROR)ctx->centroids[cid][0])/(DTYPE_ERROR)255);
             ctx->fpalette[cid][1] = ctx->fpalette[cid][3] * (((DTYPE_ERROR)ctx->centroids[cid][1])/(DTYPE_ERROR)255);
@@ -231,7 +242,7 @@ static inline DTYPE_ERROR colorDist2(const DTYPE_ERROR *v1, const DTYPE_ERROR *v
     return dist;
 }
 
-static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
+/*static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
 {
     int32_t diff = (v1[0] - v2[0]);
     uint32_t dist = diff*diff;
@@ -245,20 +256,22 @@ static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
     diff = (v1[3] - v2[3]);
     //1953810 = 255*255*3
     return (uint32_t)((diff*diff)/(DTYPE_ERROR)1.5 + ((DTYPE_ERROR)dist*((v1[3]*v2[3]/(DTYPE_ERROR)1953810))));
-}
+}*/
 
-static uint32_t kmeans_assign_update(ctx_t *ctx)
+static uint32_t kmeans_assign_update(ctx_t *ctx, DTYPE_ERROR *err)
 {
     DTYPE_ERROR cdist, bdist;
     uint32_t utemp;
     int16_t bcid;
     uint32_t newCentroids[MAX_ENTRIES][N_COMPONENTS] = {{0}};
     uint32_t countPerCentroid[MAX_ENTRIES] = {0};
+    *err = 0;
 
     for (uint32_t k = 0; k < ctx->nLeafs; ++k) {
         bdist = (uint32_t)(-1);
         for (int16_t cid = 0; cid < ctx->nc; ++cid) {
-            cdist = colorDist(ctx->leafs[k]->cc, ctx->centroids[cid]);
+            cdist = colorDist2(ctx->leafs[k]->ccf, ctx->fpalette[cid]);
+            *err += cdist;
             if (bdist > cdist) {
                 bcid = cid;
                 bdist = cdist;
@@ -276,15 +289,18 @@ static uint32_t kmeans_assign_update(ctx_t *ctx)
 
     uint64_t tdiff = 0; //absolute distance shift
     for (uint16_t k = 0; k < ctx->nc; ++k) {
-        tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][0], newCentroids[k][0], countPerCentroid[k]);
-        tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][1], newCentroids[k][1], countPerCentroid[k]);
-        tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][2], newCentroids[k][2], countPerCentroid[k]);
-        tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][3], newCentroids[k][3], countPerCentroid[k]);
+        //Don't shift transparent entry, if any.
+        if (ctx->centroids[k][3] > 0) {
+            tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][0], newCentroids[k][0], countPerCentroid[k]);
+            tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][1], newCentroids[k][1], countPerCentroid[k]);
+            tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][2], newCentroids[k][2], countPerCentroid[k]);
+            tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][3], newCentroids[k][3], countPerCentroid[k]);
 
-        ctx->fpalette[k][3] = ((DTYPE_ERROR)ctx->centroids[k][3])/(DTYPE_ERROR)255;
-        ctx->fpalette[k][0] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][0])/(DTYPE_ERROR)255);
-        ctx->fpalette[k][1] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][1])/(DTYPE_ERROR)255);
-        ctx->fpalette[k][2] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][2])/(DTYPE_ERROR)255);
+            ctx->fpalette[k][3] = ((DTYPE_ERROR)ctx->centroids[k][3])/(DTYPE_ERROR)255;
+            ctx->fpalette[k][0] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][0])/(DTYPE_ERROR)255);
+            ctx->fpalette[k][1] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][1])/(DTYPE_ERROR)255);
+            ctx->fpalette[k][2] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][2])/(DTYPE_ERROR)255);
+        }
     }
     return (uint32_t)(tdiff/ctx->nc);
 }
@@ -339,7 +355,6 @@ static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgb
 
     for (int16_t cid = 0; cid < ctx->nc; ++cid) {
         DTYPE_ERROR dist = colorDist2(v, ctx->fpalette[cid]);
-
         if (dist < minDist) {
             minDist = dist;
             bestFitId = cid;
@@ -424,8 +439,6 @@ static int generateDitheredBitmap(ctx_t *ctx, uint8_t **bitmap, const uint8_t *r
 
 static int generateBitmap(const ctx_t *ctx, uint8_t** bitmap, const uint8_t* rgba, const size_t len)
 {
-    hexnode_t *cur = ctx->root;
-
     *bitmap = (uint8_t*)calloc(len, sizeof(uint8_t));
     if (NULL == *bitmap)
         return -1;
@@ -500,12 +513,13 @@ PyObject *kdmeans_quantize(PyObject *self, PyObject *arg)
         if (ctx->nc < ctx->nLeafs) {
             init_centroids(ctx, len);
 
-            uint32_t errorDist, prevError = 0;
+            DTYPE_ERROR err = 0, prevError = 0;
             for (uint8_t k = 0; k < 4; ++k) {
-                errorDist = kmeans_assign_update(ctx);
-                if (errorDist == 0 || errorDist == prevError)
+                kmeans_assign_update(ctx, &err);
+                err /= len;
+                if (ABS(err-prevError) < 5e-7 || err < 5e-5)
                     break;
-                prevError = errorDist;
+                prevError = err;
             }
         } else {
             for (uint8_t k = 0; k < ctx->nLeafs; k++) {
