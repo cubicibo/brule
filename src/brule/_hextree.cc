@@ -61,13 +61,13 @@ static void inline clipPackPack(const DTYPE_ERROR *rgba, int32_t *irgba, uint8_t
 {
     irgba[3] = v[3] = (uint8_t)CLIPD(rgba[3]);
     if (irgba[3] > 0) {
-        irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
-        irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
         irgba[2] = v[2] = (uint8_t)CLIPD(rgba[2]);
+        irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
+        irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
     } else {
-        irgba[0] = v[0] = 0;
-        irgba[1] = v[1] = 0;
         irgba[2] = v[2] = 0;
+        irgba[1] = v[1] = 0;
+        irgba[0] = v[0] = 0;
     }
 }
 
@@ -300,16 +300,15 @@ static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
 
 static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgba)
 {
-    uint32_t minDist = 4*256*256;
+    uint32_t minDist = (uint32_t)(-1);
     int16_t bestFitId = -1;
-    const int32_t *pEntry;
 
     for (int16_t paletteEntryId = 0; paletteEntryId < ctx->lutLen; ++paletteEntryId) {
         uint32_t dist = colorDist(ctx->paletteLUT[paletteEntryId], irgba);
 
         int32_t diff = (ctx->paletteLUT[paletteEntryId][3] - irgba[3]);
-        dist = (uint32_t)((diff*diff)/(DTYPE_ERROR)1.5 + ((DTYPE_ERROR)dist*((irgba[3]*ctx->paletteLUT[paletteEntryId][3]/(DTYPE_ERROR)1953810))));
-
+        //dist = (uint32_t)((diff*diff)/(DTYPE_ERROR)1.5 + ((DTYPE_ERROR)dist*((irgba[3]*ctx->paletteLUT[paletteEntryId][3]/(DTYPE_ERROR)1953810))));
+        dist = dist + 3*(uint32_t)(diff*diff);
         if (dist < minDist) {
             minDist = dist;
             bestFitId = paletteEntryId;
@@ -361,7 +360,7 @@ static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uin
                     crgba[1] = rgbaPixel[1];
                     crgba[0] = rgbaPixel[0];
                 } else {
-                    crgba[0] = crgba[1] = crgba[2] = 0;
+                    crgba[2] = crgba[1] = crgba[0] = 0;
                 }
             }
             //reset error accumulator of pixel
@@ -410,7 +409,6 @@ static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uin
 static int generateBitmap(const void* vctx, uint8_t** bitmap, const uint8_t* rgba, const size_t len, const uint32_t plen)
 {
     const ctx_t *ctx = (const ctx_t*)vctx;
-    hexnode_t *cur = ctx->root;
 
     *bitmap = (uint8_t*)calloc(len, sizeof(uint8_t));
     if (NULL == *bitmap)
