@@ -35,6 +35,7 @@
 #define MAX_WIDTH 16
 #define N_COMPONENTS 4
 #define MAX_ENTRIES 256
+#define ALPHA_THRESH 2
 
 #define MIN(a, b) (a < b ? a : b)
 #define MAX(a, b) (a > b ? a : b)
@@ -48,7 +49,7 @@
 static void inline clipPackPack(const DTYPE_ERROR *rgba, int32_t *irgba, uint8_t *v)
 {
     irgba[3] = v[3] = (uint8_t)CLIPD(rgba[3]);
-    if (irgba[3] > 0) {
+    if (irgba[3] > ALPHA_THRESH) {
         irgba[2] = v[2] = (uint8_t)CLIPD(rgba[2]);
         irgba[1] = v[1] = (uint8_t)CLIPD(rgba[1]);
         irgba[0] = v[0] = (uint8_t)CLIPD(rgba[0]);
@@ -61,28 +62,47 @@ static void inline clipPackPack(const DTYPE_ERROR *rgba, int32_t *irgba, uint8_t
 
 static void inline unpackRgbaFp(const uint8_t *v, DTYPE_ERROR *prgba)
 {
-    prgba[0] = (DTYPE_ERROR)v[0];
-    prgba[1] = (DTYPE_ERROR)v[1];
-    prgba[2] = (DTYPE_ERROR)v[2];
-    prgba[3] = (DTYPE_ERROR)v[3];
+    prgba[3] = (DTYPE_ERROR)(v[3]);
+    if (v[3] > ALPHA_THRESH) {
+        prgba[2] = (DTYPE_ERROR)(v[2]);
+        prgba[1] = (DTYPE_ERROR)(v[1]);
+        prgba[0] = (DTYPE_ERROR)(v[0]);
+    } else {
+        prgba[2] = prgba[1] = prgba[0] = (DTYPE_ERROR)0;
+    }
 }
 
 static void inline unpackRgba(const uint8_t *value, int32_t *prgba)
 {
-    prgba[0] = (int32_t)value[0];
-    prgba[1] = (int32_t)value[1];
-    prgba[2] = (int32_t)value[2];
     prgba[3] = (int32_t)value[3];
+    if (value[3] > ALPHA_THRESH) {
+        prgba[2] = (int32_t)value[2];
+        prgba[1] = (int32_t)value[1];
+        prgba[0] = (int32_t)value[0];
+    } else {
+        prgba[2] = prgba[1] = prgba[0] = 0;
+    }
 }
 
 static void inline packRgba(uint8_t *v, const int32_t *prgba)
 {
-    v[0] = prgba[0];
-    v[1] = prgba[1];
-    v[2] = prgba[2];
     v[3] = prgba[3];
+    if (v[3] > ALPHA_THRESH) {
+        v[2] = prgba[2];
+        v[1] = prgba[1];
+        v[0] = prgba[0];
+    } else {
+        v[0] = v[1] = v[2] = 0;
+    }
 }
 
+static void inline normPremultiply(const int32_t *v, DTYPE_ERROR *prgba)
+{
+    prgba[3] = ((DTYPE_ERROR)v[3])/(DTYPE_ERROR)255;
+    prgba[0] = prgba[3] * (((DTYPE_ERROR)v[0])/(DTYPE_ERROR)255);
+    prgba[1] = prgba[3] * (((DTYPE_ERROR)v[1])/(DTYPE_ERROR)255);
+    prgba[2] = prgba[3] * (((DTYPE_ERROR)v[2])/(DTYPE_ERROR)255);
+}
 
 PyDoc_STRVAR(kdmeans_quantize_doc, "quantize(data: tuple[ndarray[uint8], int]) -> tuple[ndarray[uint8], ndarray[uint8]]\
 \
@@ -113,7 +133,7 @@ typedef struct ctx_s {
 #if (N_COMPONENTS == 4)
 static uint8_t inline indexFrom(const uint8_t *v, const uint8_t depth)
 {
-    return (XBIT2ID(v, depth, 0) | XBIT2ID(v, depth, 1) | XBIT2ID(v, depth, 2) | XBIT2ID(v, depth, 3)) * (v[3] > 0);
+    return (XBIT2ID(v, depth, 0) | XBIT2ID(v, depth, 1) | XBIT2ID(v, depth, 2) | XBIT2ID(v, depth, 3)) * (v[3] > ALPHA_THRESH);
 }
 #else
 # error "No indexer for CC != 4."
@@ -175,12 +195,7 @@ static int insert(ctx_t *ctx, const uint8_t *value)
                 }
                 ctx->leafs[ctx->nLeafs++] = child->priv;
                 unpackRgba(value, child->priv->cc);
-                unpackRgbaFp(value, child->priv->ccf);
-                child->priv->ccf[3] = ((DTYPE_ERROR)child->priv->ccf[3])/(DTYPE_ERROR)255;
-                child->priv->ccf[0] = child->priv->ccf[3] * (((DTYPE_ERROR)child->priv->ccf[0])/(DTYPE_ERROR)255);
-                child->priv->ccf[1] = child->priv->ccf[3] * (((DTYPE_ERROR)child->priv->ccf[1])/(DTYPE_ERROR)255);
-                child->priv->ccf[2] = child->priv->ccf[3] * (((DTYPE_ERROR)child->priv->ccf[2])/(DTYPE_ERROR)255);
-
+                normPremultiply(child->priv->cc, child->priv->ccf);
             }
             node->children[c] = child;
         }
@@ -195,30 +210,27 @@ static void init_centroids(ctx_t *ctx, const size_t len)
     const int32_t strideSample = (int32_t)lrint(ctx->nLeafs/(float)ctx->nc);
     uint32_t nextSample = 0;
     int cid = 0, tspSeen = 0;
-    uint32_t maxLen = len/10;
+    uint32_t maxCount = len/10;
 
     const int32_t avgCount = (int32_t)lrint((double)len/(double)ctx->nLeafs);
     for (uint32_t k = 0; k < ctx->nLeafs; ++k) {
+        //Flatten the histogram to improve high frequencies (and hence, dithering)
+        ctx->leafs[k]->count += (avgCount - (int32_t)ctx->leafs[k]->count)/4;
+
         //Avoid large bias on single colour
-        if (ctx->leafs[k]->count > maxLen)
-            ctx->leafs[k]->count = maxLen;
+        if (ctx->leafs[k]->count > maxCount)
+            ctx->leafs[k]->count = maxCount;
 
         if (k == nextSample) {
-            if (0 == ctx->centroids[cid][3])
+            if (0 == ctx->leafs[k]->cc[3])
                 tspSeen = 1;
             if (!tspSeen && cid-1 >= ctx->nc)
                 memset(ctx->centroids[cid], 0, sizeof(int32_t)*N_COMPONENTS);
             else
                 memcpy(ctx->centroids[cid], ctx->leafs[k]->cc, sizeof(int32_t)*N_COMPONENTS);
-            ctx->fpalette[cid][3] = ((DTYPE_ERROR)ctx->centroids[cid][3])/(DTYPE_ERROR)255;
-            ctx->fpalette[cid][0] = ctx->fpalette[cid][3] * (((DTYPE_ERROR)ctx->centroids[cid][0])/(DTYPE_ERROR)255);
-            ctx->fpalette[cid][1] = ctx->fpalette[cid][3] * (((DTYPE_ERROR)ctx->centroids[cid][1])/(DTYPE_ERROR)255);
-            ctx->fpalette[cid][2] = ctx->fpalette[cid][3] * (((DTYPE_ERROR)ctx->centroids[cid][2])/(DTYPE_ERROR)255);
+            normPremultiply(ctx->centroids[cid], ctx->fpalette[cid]);
             nextSample += ((++cid >= ctx->nc) ? 0 : strideSample);
         }
-
-        //Flatten the histogram to improve high frequencies (and hence, dithering)
-        ctx->leafs[k]->count += (avgCount - (int32_t)ctx->leafs[k]->count)/4;
     }
 }
 
@@ -248,7 +260,7 @@ static inline DTYPE_ERROR colorDist2(const DTYPE_ERROR *v1, const DTYPE_ERROR *v
     return dist;
 }
 
-/*static inline uint32_t colorDist(const int32_t *v1, const int32_t *v2)
+static inline DTYPE_ERROR colorDist(const int32_t *v1, const int32_t *v2)
 {
     int32_t diff = (v1[0] - v2[0]);
     uint32_t dist = diff*diff;
@@ -260,29 +272,59 @@ static inline DTYPE_ERROR colorDist2(const DTYPE_ERROR *v1, const DTYPE_ERROR *v
     dist += diff*diff;
 
     diff = (v1[3] - v2[3]);
-    //1953810 = 255*255*3
-    return (uint32_t)((diff*diff)/(DTYPE_ERROR)1.5 + ((DTYPE_ERROR)dist*((v1[3]*v2[3]/(DTYPE_ERROR)1953810))));
-}*/
+    return dist + 3*(uint32_t)(diff*diff);
+}
 
-static uint32_t kmeans_assign_update(ctx_t *ctx, DTYPE_ERROR *err)
+static void init_centroids_plusplus(ctx_t *ctx)
+{
+    //First palette entry is transparent
+    memset(ctx->centroids[0], 0, sizeof(int32_t)*N_COMPONENTS);
+
+    DTYPE_ERROR fpal[N_COMPONENTS];
+    normPremultiply(ctx->centroids[0], ctx->fpalette[0]);
+
+    for (int16_t cid = 1; cid < ctx->nc; ++cid) {
+        DTYPE_ERROR maxDist = -1;
+        int32_t bestFitId;
+        for (uint32_t k = 0; k < ctx->nLeafs; ++k) {
+            if (ctx->leafs[k]->cc[3] > ALPHA_THRESH && 0 == ctx->leafs[k]->aci) {
+                //DTYPE_ERROR cDist = colorDist2(ctx->leafs[k]->ccf, ctx->fpalette[cid-1]);
+                DTYPE_ERROR cDist = colorDist(ctx->leafs[k]->cc, ctx->centroids[cid-1]);
+                if (cDist > maxDist) {
+                    maxDist = cDist;
+                    bestFitId = k;
+                }
+            }
+        }
+        if (maxDist > -1) {
+            ctx->leafs[bestFitId]->aci = 1;
+            memcpy(ctx->centroids[cid], ctx->leafs[bestFitId]->cc, sizeof(int32_t)*N_COMPONENTS);
+            normPremultiply(ctx->centroids[cid], ctx->fpalette[cid]);
+        } else {
+            ctx->nc = cid;
+        }
+    }
+}
+
+static uint32_t kmeans_assign_update(ctx_t *ctx)
 {
     DTYPE_ERROR cdist, bdist;
     uint32_t utemp;
     int16_t bcid;
     uint32_t newCentroids[MAX_ENTRIES][N_COMPONENTS] = {{0}};
     uint32_t countPerCentroid[MAX_ENTRIES] = {0};
-    *err = 0;
 
     for (uint32_t k = 0; k < ctx->nLeafs; ++k) {
-        bdist = (uint32_t)(-1);
+        bdist = (DTYPE_ERROR)((uint32_t)(-1));
         for (int16_t cid = 0; cid < ctx->nc; ++cid) {
-            cdist = colorDist2(ctx->leafs[k]->ccf, ctx->fpalette[cid]);
-            *err += cdist;
+            //cdist = colorDist2(ctx->leafs[k]->ccf, ctx->fpalette[cid]);
+            cdist = colorDist(ctx->leafs[k]->cc, ctx->centroids[cid]);
             if (bdist > cdist) {
                 bcid = cid;
                 bdist = cdist;
             }
         }
+
         ctx->leafs[k]->aci = bcid;
         utemp = ctx->leafs[k]->count;
 
@@ -295,20 +337,16 @@ static uint32_t kmeans_assign_update(ctx_t *ctx, DTYPE_ERROR *err)
 
     uint64_t tdiff = 0; //absolute distance shift
     for (uint16_t k = 0; k < ctx->nc; ++k) {
-        //Don't shift transparent entry, if any.
+        //Don't allow to shift the transparent entry
         if (ctx->centroids[k][3] > 0) {
             tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][0], newCentroids[k][0], countPerCentroid[k]);
             tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][1], newCentroids[k][1], countPerCentroid[k]);
             tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][2], newCentroids[k][2], countPerCentroid[k]);
             tdiff += computeCentroidComponentAndDiff(&ctx->centroids[k][3], newCentroids[k][3], countPerCentroid[k]);
-
-            ctx->fpalette[k][3] = ((DTYPE_ERROR)ctx->centroids[k][3])/(DTYPE_ERROR)255;
-            ctx->fpalette[k][0] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][0])/(DTYPE_ERROR)255);
-            ctx->fpalette[k][1] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][1])/(DTYPE_ERROR)255);
-            ctx->fpalette[k][2] = ctx->fpalette[k][3] * (((DTYPE_ERROR)ctx->centroids[k][2])/(DTYPE_ERROR)255);
+            normPremultiply(ctx->centroids[k], ctx->fpalette[k]);
         }
     }
-    return (uint32_t)(tdiff/ctx->nc);
+    return (uint32_t)(tdiff);
 }
 
 static uint8_t inline fetchPaletteId(hexnode_t *cur, const uint8_t *value)
@@ -350,17 +388,15 @@ static int16_t inline testFetchPaletteId(hexnode_t *cur, const uint8_t *value)
 
 static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgba)
 {
-    DTYPE_ERROR minDist = 4*256*256;
+    DTYPE_ERROR minDist = (DTYPE_ERROR)((uint32_t)(-1));
     int16_t bestFitId = -1;
 
     DTYPE_ERROR v[4];
-    v[3] = ((DTYPE_ERROR)irgba[3])/(DTYPE_ERROR)255;
-    v[0] = v[3] * ((DTYPE_ERROR)irgba[0])/(DTYPE_ERROR)255;
-    v[1] = v[3] * ((DTYPE_ERROR)irgba[1])/(DTYPE_ERROR)255;
-    v[2] = v[3] * ((DTYPE_ERROR)irgba[2])/(DTYPE_ERROR)255;
+    normPremultiply(irgba, v);
 
     for (int16_t cid = 0; cid < ctx->nc; ++cid) {
         DTYPE_ERROR dist = colorDist2(v, ctx->fpalette[cid]);
+        //DTYPE_ERROR dist = colorDist(irgba, ctx->centroids[cid]);
         if (dist < minDist) {
             minDist = dist;
             bestFitId = cid;
@@ -382,13 +418,23 @@ static int generateDitheredBitmap(ctx_t *ctx, uint8_t **bitmap, const uint8_t *r
     if (NULL == errors)
         return -1;
 
-    DTYPE_ERROR sErr, rgbaOrg[4], rgbaErr[4];
-    int32_t paletteEntryId, irgba[4];
-    uint8_t crgba[4];
+    DTYPE_ERROR sErr, rgbaOrg[N_COMPONENTS], rgbaErr[N_COMPONENTS];
+    int32_t paletteEntryId, irgba[N_COMPONENTS];
+    uint8_t crgba[N_COMPONENTS];
     const uint8_t *pix;
 
+    int direction = -1;
+
     for (uint32_t y = 0, lineId = 0; y < len; y += width, ++lineId) {
-        for (uint32_t x = 0; x < width; ++x) {
+        uint32_t x;
+        if (direction < 0) {
+            direction = 1;
+            x = 0;
+        } else {
+            direction = -1;
+            x = width - 1;
+        }
+        for (uint32_t cnt = 0; cnt < width; ++cnt, x += direction) {
             pix = &rgba[(y+x) << 2];
             pErrors = &errors[ERROR_ROW_LOC(lineId, rowLen, x)];
 
@@ -403,38 +449,30 @@ static int generateDitheredBitmap(ctx_t *ctx, uint8_t **bitmap, const uint8_t *r
                 //Add the residual error to the image pixel
                 ADDERROR(rgbaOrg, pErrors);
                 clipPackPack(rgbaOrg, irgba, crgba);
+                paletteEntryId = testFetchPaletteId(ctx->root, crgba);
             } else {
-                crgba[3] = pix[3];
-                if (0 < crgba[3]) {
-                    crgba[2] = pix[2];
-                    crgba[1] = pix[1];
-                    crgba[0] = pix[0];
-                } else {
-                    crgba[0] = crgba[1] = crgba[2] = 0;
-                }
+                paletteEntryId = fetchPaletteId(ctx->root, pix);
             }
             //reset error accumulator of pixel
             memset(pErrors, 0, sizeof(rgbaErr));
 
-            //fetch closest palette entry
-            paletteEntryId = testFetchPaletteId(ctx->root, crgba);
+            //Only true if current color has no palette entry
             if (paletteEntryId < 0) {
                 paletteEntryId = findClosestInPalette(ctx, irgba);
             }
 
-            for (uint8_t k = 0; k < 4; k++)
+            for (uint8_t k = 0; k < N_COMPONENTS; k++)
                 rgbaErr[k] = DITHDIV(rgbaOrg[k] - (DTYPE_ERROR)ctx->centroids[paletteEntryId][k]);
 
-            //simplified edges conditions
-            if (x < width - 2) {
-                ADDERROR(pErrors + 4, rgbaErr);
-                ADDERROR(pErrors + 8, rgbaErr);
+            if ((direction > 0 && x < width - 2) || (direction < 0 && x > 1)) {
+                ADDERROR(pErrors + 4*direction, rgbaErr);
+                ADDERROR(pErrors + 8*direction, rgbaErr);
             }
-            if (y < len - width && x < width - 1 && x > 0) {
-                pErrors = &errors[ERROR_ROW_LOC(lineId+1, rowLen, x) - 4];
+            if ((y < len - width) && (x < width - 1) && (x > 0)) {
+                pErrors = &errors[ERROR_ROW_LOC(lineId+1, rowLen, x)];
+                ADDERROR(pErrors - 4, rgbaErr);
                 ADDERROR(pErrors,     rgbaErr);
                 ADDERROR(pErrors + 4, rgbaErr);
-                ADDERROR(pErrors + 8, rgbaErr);
             }
             if (y < len - 2*width) {
                 pErrors = &errors[ERROR_ROW_LOC(lineId+2, rowLen, x)];
@@ -521,15 +559,15 @@ PyObject *kdmeans_quantize(PyObject *self, PyObject *arg)
 
     if (0 == err && palette) {
         if (ctx->nc < ctx->nLeafs) {
+            //init_centroids_plusplus(ctx);
             init_centroids(ctx, len);
 
-            DTYPE_ERROR err = 0, prevError = 0;
-            for (uint8_t k = 0; k < 4; ++k) {
-                kmeans_assign_update(ctx, &err);
-                err /= len;
-                if (ABS(err-prevError) < 5e-7 || err < 5e-5)
+            uint32_t errorDist, prevError = 0;
+            for (uint8_t k = 0; k < 30; ++k) {
+                errorDist = kmeans_assign_update(ctx);
+                if (errorDist == prevError)
                     break;
-                prevError = err;
+                prevError = errorDist;
             }
         } else {
             for (uint8_t k = 0; k < ctx->nLeafs; k++) {
