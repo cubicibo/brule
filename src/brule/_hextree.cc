@@ -92,10 +92,11 @@ PyDoc_STRVAR(hextree_quantize_doc, "quantize(bitmap: tuple[NDArray[uint8], int])
 Quantize input RGBA and return (bitmap, palette).");
 
 typedef struct rgba_leaf_s {
-    uint32_t depth;
-    uint32_t count;
     DTYPE_ERROR rgba[4];
+    unsigned int count;
     void *ref;
+    uint8_t depth;
+    uint8_t isLeaf;
 } rgba_leaf_t;
 
 typedef struct hexnode_s {
@@ -189,7 +190,11 @@ static int insert(void *vctx, const uint8_t *value)
 
             ctx->leafs[ctx->nLeafs++] = (rgba_leaf_t*)child->priv;
             node->children[c] = child;
-            ctx->nEndLeafs += (d == MAX_DEPTH-1);
+            if (d == MAX_DEPTH-1)
+            {
+                ++ctx->nEndLeafs;
+                child->priv->isLeaf = 1;
+            }
         }
         node = node->children[c];
         ++node->priv->count;
@@ -218,8 +223,7 @@ static int32_t inline testFetchColourLeaf(hexnode_t *cur, uint8_t *value)
         else
             break;
     }
-    //is leaf?
-    if (!memcmp(&cur->children[1], cur->children, sizeof(hexnode_t*)*(MAX_WIDTH-1)))
+    if (cur->priv && cur->priv->isLeaf)
         return (int32_t)cur->priv->count;
     return -1;
 }
@@ -454,17 +458,14 @@ static int32_t reduceTo(void *ctx, unsigned int maxLeafs, uint8_t **palette)
     hexnode_t *ref;
     rgba_leaf_t* leaf;
 
-    uint32_t leafCnt = pctx->nEndLeafs;
-
     if (maxLeafs < MAX_WIDTH || !pctx->leafs)
         return -1;
 
     qsort(pctx->leafs, pctx->nLeafs, sizeof(rgba_leaf_t*), cmpleafs);
 
-    for (uint32_t k = 0; k < pctx->nLeafs && maxLeafs < leafCnt; k++) {
+    uint32_t leafCnt = pctx->nEndLeafs;
+    for (uint32_t k = pctx->nEndLeafs; k < pctx->nLeafs && maxLeafs < leafCnt; ++k) {
         leaf = ((rgba_leaf_t*)pctx->leafs[k]);
-        if (leaf->depth == MAX_DEPTH-1)
-            continue;
         ref = (hexnode_t*)leaf->ref;
         if (!ref || !ref->priv)
             continue;
@@ -477,19 +478,21 @@ static int32_t reduceTo(void *ctx, unsigned int maxLeafs, uint8_t **palette)
                 leaf->rgba[1] += ref->children[cc]->priv->rgba[1] * cf;
                 leaf->rgba[2] += ref->children[cc]->priv->rgba[2] * cf;
                 leaf->rgba[3] += ref->children[cc]->priv->rgba[3] * cf;
+                ref->children[cc]->priv->isLeaf = 0;
                 ref->children[cc]->priv->ref = NULL;
                 free(ref->children[cc]);
                 ref->children[cc] = NULL;
                 --leafCnt;
             }
         }
-        ++leafCnt; //parent is now a leaf
+        //parent is now a leaf
+        leaf->isLeaf = 1;
+        ++leafCnt;
     }
 
     *palette = (uint8_t*)calloc(leafCnt << 2, sizeof(uint8_t));
     if (!palette)
         return -1;
-
 
     uint8_t *pal = *palette;
     for (uint32_t k = 0, plen = 0; plen != leafCnt; k++) {

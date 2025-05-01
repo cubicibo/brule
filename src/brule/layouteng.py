@@ -26,13 +26,12 @@ _Coordinates = TypeVar('Coordinates')
 
 class _PyLayoutEngine:
     def __init__(self, shape: tuple[int, int]) -> None:
-        self._screen = None
-        self.init(shape)
+        self._screen = np.zeros(shape[::-1], np.uint8)
         self._last_raw_container = None
 
     def add(self, xym: tuple[int, int, npt.NDArray[np.uint8]]) -> None:
         xp, yp, mask = xym
-        assert self._screen is not None
+        assert self._screen is not None, "destroyed instance"
         self._screen[yp:yp+mask.shape[0], xp:xp+mask.shape[1]] |= (mask > 0)
 
     @staticmethod
@@ -41,13 +40,13 @@ class _PyLayoutEngine:
         cmin, cmax = np.where(np.any(mask, axis=0))[0][[0, -1]]
         return cmin+xo, rmin+yo, cmax+1+xo, rmax+1+yo
 
-    def get_container(self) -> tuple[int, int, int, int]:
+    def get_container(self, iid: int = None) -> tuple[int, int, int, int]:
         assert self._last_raw_container is not None
         return self._last_raw_container
 
-    def find(self) -> tuple[_Coordinates,_Coordinates,_Coordinates, int]:
+    def find(self, iid: int = None) -> tuple[_Coordinates,_Coordinates,_Coordinates, int]:
         cls = self.__class__
-        assert self._screen is not None
+        assert self._screen is not None, "destroyed instance"
         assert np.any(self._screen), "No screen overlay in epoch."
 
         f_area = lambda xyc: (xyc[2]-xyc[0])*(xyc[3]-xyc[1])
@@ -104,16 +103,21 @@ class _PyLayoutEngine:
             final_wds.append((wd[0]-cbox[0], wd[1]-cbox[1], wd[2]-cbox[0], wd[3]-cbox[1]))
         return cbox, final_wds[0], final_wds[1], is_vertical
 
-    def init(self, shape: Optional[tuple[int, int]]) -> None:
-        if isinstance(shape, tuple):
-            self._screen = np.zeros(shape[::-1], np.uint8)
-        else:
-            self._screen = None
+    @classmethod
+    def init(cls, shape: tuple[int, int]) -> '_PyLayoutEngine':
+        return cls(shape)
+
+    def destroy(self) -> None:
+        self._screen = None
+
+    def __del__(self) -> None:
+        self._screen = None
 ####
 
 class LayoutEngine:
     _internals = None
     _has_c_ext = False
+
     @classmethod
     def _setup(cls):
         try:
@@ -123,57 +127,50 @@ class LayoutEngine:
         else:
             cls._internals = _layouteng
             cls._has_c_ext = True
-
+    
     @classmethod
     def get_capabilities(cls) -> list[str]:
         return ['C']*cls._has_c_ext + ['Python']
 
-    def __init__(self, shape: Optional[tuple]) -> None:
+    def __init__(self, shape: tuple) -> None:
         assert 2 == len(shape)
-        self._setup_internals(shape)
 
-    def _setup_internals(self, shape: Optional[tuple]) -> None:
-        if shape is not None and not isinstance(shape, tuple):
-            shape = tuple(shape)
-        if isinstance(shape, tuple):
-            self._shape = shape
-        else:
-            assert shape is None
-
-        if self._internals == _PyLayoutEngine:
-            self._iinst = _PyLayoutEngine(shape)
-        else:
-            self._iinst = self._internals
-
-        try:
-            self._iinst.init(shape)
-        except:
-            self._ready = False
-        else:
-            self._ready = isinstance(shape, tuple)
+        self.__engine = __class__._internals
+        self._iinst = self.__engine.init(shape)
+        self._shape = shape
+        self._ready = True
 
     def add_to_layout(self, xp: int, yp: int, mask: npt.NDArray[np.uint8]) -> None:
         assert self._ready
         assert 2 == len(mask.shape) and mask.dtype == np.uint8
         assert all(map(lambda x: 0 < x[2]+x[0] <= x[1], zip(mask.shape[::-1], self._shape, (xp, yp))))
-        self._iinst.add((xp, yp, mask))
+        if isinstance(self._iinst, _PyLayoutEngine):
+            self._iinst.add((xp, yp, mask))
+        else:
+            self.__engine.add((self._iinst, xp, yp, mask))
 
     def get_layout(self) -> tuple[_Coordinates, _Coordinates, _Coordinates, int]:
         assert self._ready
-        return self._iinst.find()
+        return self.__engine.find(self._iinst)
 
     def get_raw_container(self) -> tuple[int, int, int, int]:
         assert self._ready
-        return self._iinst.get_container()
+        return self.__engine.get_container(self._iinst)
 
     def reset(self) -> None:
-        self._setup_internals(self._shape)
+        if self._ready:
+            self.destroy()
+        self._iinst = self.__engine.init(self._shape)
+        self._ready = True
 
     def destroy(self) -> None:
-        self._setup_internals(None)
+        if self._ready:
+            self.__engine.destroy(self._iinst)
+        self._ready = False
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.destroy()
+
 ####
 #init module
 LayoutEngine._setup()
