@@ -44,13 +44,6 @@ typedef struct shape_s {
     int width, height;
 } shape_t;
 
-//static container_t container;  // container within video frame
-//static container_t last_windows[NUM_WINDOWS_MAX];
-//static uint8_t *screen;
-//static shape_t shape;
-//static uint8_t is_vertical_layout;
-//static uint8_t has_layout_changed;
-
 typedef struct layout_s {
     container_t container;
     container_t last_windows[NUM_WINDOWS_MAX];
@@ -119,11 +112,12 @@ static inline void pad_container(shape_t *shape, const container_t *c2, containe
 {
     memcpy(c1, c2, sizeof(container_t));
     int diff, direction;
+
     DIRECTIONAL_PAD(0, y1, diff, direction);
     DIRECTIONAL_PAD(0, x1, diff, direction);
 
     DIRECTIONAL_PAD(shape->height, y2, diff, direction);
-    DIRECTIONAL_PAD(shape->width, x2, diff, direction);
+    DIRECTIONAL_PAD(shape->width,  x2, diff, direction);
 }
 
 static inline layout_t* check_instance(PyObject *arg)
@@ -280,7 +274,7 @@ static void brute_force_windows(layout_t *le, container_t *best, const container
 
 static int get_current_container(layout_t *le, container_t *current_cont)
 {
-    int x,y;
+    int x,y,md;
     uint8_t *screen = le->screen;
 
     for (y = 0; y < le->shape.height && 0 == screen[y*le->shape.width] && 0 == memcmp(&screen[y*le->shape.width], &screen[y*le->shape.width+1], le->shape.width-1); y++);
@@ -301,17 +295,20 @@ static int get_current_container(layout_t *le, container_t *current_cont)
     current_cont->x2 = MIN(current_cont->x2+1, le->shape.width);
 
     if (!(current_cont->x1 >= current_cont->x2 || current_cont->y1 >= current_cont->y2)) {
-        x = 8 - (current_cont->x2 - current_cont->x1);
-        if (x > 0 && current_cont->x1 >= x)
-            current_cont->x1 -= x;
-        else if(x > 0)
-            current_cont->x2 += x;
+        x = MIN_MARGIN_BOX - (current_cont->x2 - current_cont->x1);
 
-        x = 8 - (current_cont->y2 - current_cont->y1);
-        if (x > 0 && current_cont->y1 >= x)
-            current_cont->y1 -= x;
-        else if(x > 0)
-            current_cont->y2 += x;
+        if (x > 0) {
+            md = MIN(x, current_cont->x1);
+            current_cont->x1 -= md;
+            current_cont->x2 += (x - md);
+        }
+
+        x = MIN_MARGIN_BOX - (current_cont->y2 - current_cont->y1);
+        if (x > 0) {
+            md = MIN(x, current_cont->y1);
+            current_cont->y1 -= md;
+            current_cont->y2 += (x - md);
+        }
 
         return true;
     }
@@ -445,9 +442,9 @@ PyObject* layouteng_init(PyObject* self, PyObject* arg)
     le->shape.width = (uint16_t)PyLong_AsLong(PyTuple_GetItem(arg, 0));
     le->shape.height = (uint16_t)PyLong_AsLong(PyTuple_GetItem(arg, 1));
 
-    if (le->shape.height > 1088 || le->shape.height < 16)
+    if (le->shape.height > 1088 || le->shape.height < MIN_MARGIN_BOX)
         return NULL;
-    if (le->shape.width > 1928 || le->shape.width < 16)
+    if (le->shape.width > 1928 || le->shape.width < MIN_MARGIN_BOX)
         return NULL;
 
     le->is_vertical_layout = (uint8_t)(-1);
