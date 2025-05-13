@@ -114,7 +114,15 @@ if __name__ == "__main__":
         extra_compile_args=extra_compile_args,
     )
 
-    modules = [brule_codec, layout_eng, hextree, kdkmeans]
+    chandist = setuptools.Extension(
+        f"{NAME}._chandist",
+        sources=[f"src/{NAME}/_chandist.cc"],
+        include_dirs=[np.get_include()],
+        language="c",
+        extra_compile_args=extra_compile_args,
+    )
+
+    modules = [brule_codec, layout_eng, hextree, kdkmeans, chandist]
 
     def run_setup(modules):
         setuptools.setup(
