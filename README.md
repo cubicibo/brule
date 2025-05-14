@@ -2,12 +2,13 @@
 Collection of C extension modules for SUPer with pure-python fallbacks
 - Brule: Bitmap RUn LEngth coder and decoder.
 - LayoutEngine: An optimal two-rects layout finder for a sequence of images.
-- HexTree: RGBA image quantizer.
+- HexTree: RGBA image quantizer (turbo, good quality) - based on hexagonal tree folding
+- QtzrUTC: RGBA image quantizer (fast, excellent quality) - based on unidimensional threshold clustering
 
 ## Brule brief
 Brule implements 2 or 3 times the same function, and select the fastest implementation available at runtime.
 - C (fastest)
-- numba (fast - implemented only for the RLE codec)
+- numba (only for the RLE codec)
 - pure Python (slow)
 
 For the encoder, the C implementation is up to 20 times faster than numba. The pure Python implementation does not compete and is only there for convenience.
@@ -31,16 +32,18 @@ The run-length codec is operated like this:
 True
 ```
 
-## Example (HexTree)
+## Example (HexTree, QtzrUTC)
 The image quantizer is used like this:
 ```python
->>> from brule import HexTree
+>>> from brule import HexTree, QtzrUTC
 >>> import numpy as np
 >>> from PIL import Image
 >>> rgba = np.asarray(Image.open(...).convert('RGBA'))
 >>> #quantize with 255 colours 
->>> bitmap, palette = HexTree.quantize(rgba, 255)
+>>> bitmap1, palette1 = HexTree.quantize(rgba, 255)
+>>> bitmap2, palette2 = QtzrUTC.quantize(rgba, 255)
 ```
 
 ## Credits
 - https://github.com/pallets/markupsafe markupsafe for the pip install fallback mechanism with compiled extensions.
+- https://github.com/DarthSim/quantizr for WClustering
