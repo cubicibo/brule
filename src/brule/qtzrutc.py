@@ -4,7 +4,7 @@
 """
 MIT License
 
-Copyright (c) 2024 cubicibo
+Copyright (c) 2024-2025 cubicibo
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -48,14 +48,14 @@ class _PyKDMeans:
         _, label, center = cv2.kmeans(flat_img, nk, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
         return label.reshape(h, w).astype(np.uint8), np.round(np.clip(center, 0.0, 1.0)*255).astype(np.uint8)
 #%%
-class KDMeans:
+class QtzrUTC:
     _cimpl = None
 
     @classmethod
     def _setup(cls) -> None:
         try:
-            from . import _kdmeans
-            cls._cimpl = _kdmeans.quantize
+            from . import _qtzrutc
+            cls._cimpl = _qtzrutc.quantize
         except (ImportError, ModuleNotFoundError):
             ...
 
@@ -77,7 +77,6 @@ class KDMeans:
     @classmethod
     def quantize(cls, rgba: NDArray[np.uint8], colours: int = 255) -> tuple[NDArray[np.uint8], NDArray[np.uint8]]:
         """
-        Encode a 2D map using the RLE defined in 'US 7912305 B1' patent.
         :param RGBA:    rgba image to quantize
         :param colours: maximum number of palette entries
         :return:        bitmap, palette as numpy arrays.
@@ -99,4 +98,4 @@ class KDMeans:
 ####
 
 #init module
-KDMeans._setup()
+QtzrUTC._setup()

@@ -121,7 +121,7 @@ static void inline clipPackPack(const DTYPE_ERROR *rgba, int32_t *irgba, uint8_t
     }
 }
 
-PyDoc_STRVAR(chandist_quantize_doc, "quantize(bitmap: tuple[NDArray[uint8], int]) -> tuple[NDArray[uint8], NDArray[uint8]]\
+PyDoc_STRVAR(qtzrutc_quantize_doc, "quantize(bitmap: tuple[NDArray[uint8], int]) -> tuple[NDArray[uint8], NDArray[uint8]]\
 \
 Quantize input RGBA and return (bitmap, palette).");
 
@@ -334,7 +334,7 @@ static int generateBitmap( const ctx_t* ctx, uint8_t** bitmap, const uint8_t* rg
                 tmpErr = MAX(tmpErr, (-1)*DTMAXERR);
 #undef DTMAXERR
                 sErr += tmpErr*tmpErr;
-                pErrors[k] = tmpErr
+                pErrors[k] = tmpErr;
             }
 
             unpackRgba(rgbaPixel, rgbaOrg);
@@ -446,9 +446,9 @@ static void get_cluster_stats(cluster_t *cluster)
     cluster->channelMaxError = (uint32_t)CLIPD(rgba_diff[cluster->channelIdMaxError]/(DTYPE_ERROR)cluster->weight);
 }
 
-static int split_cluster(cluster_t *cluster, cluster_t *newCluster)
+static int split_cluster(cluster_t *cluster, cluster_t *neqtzrutc)
 {
-    if (cluster->cid >= MAX_PALETTE_ENTRIES || newCluster->cid >= MAX_PALETTE_ENTRIES)
+    if (cluster->cid >= MAX_PALETTE_ENTRIES || neqtzrutc->cid >= MAX_PALETTE_ENTRIES)
         return MAX_PALETTE_ENTRIES;
     const unsigned int chn = cluster->channelIdMaxError;
     const unsigned int chnMean = cluster->rgba[chn];
@@ -482,21 +482,21 @@ static int split_cluster(cluster_t *cluster, cluster_t *newCluster)
 
     //If the greater cluster has more weight, assign the equals to the smaller
     if (cluster->weight - we > 2*wl) {
-        newCluster->popCount = cluster->popCount - ir;
-        newCluster->population = &cluster->population[ir];
+        neqtzrutc->popCount = cluster->popCount - ir;
+        neqtzrutc->population = &cluster->population[ir];
     } else {
-        newCluster->popCount = cluster->popCount - il;
-        newCluster->population = &cluster->population[il];
+        neqtzrutc->popCount = cluster->popCount - il;
+        neqtzrutc->population = &cluster->population[il];
     }
-    if (cluster->popCount > newCluster->popCount) {
-        cluster->popCount -= newCluster->popCount;
+    if (cluster->popCount > neqtzrutc->popCount) {
+        cluster->popCount -= neqtzrutc->popCount;
         //cluster->population points to the same base address
 
-        for (unsigned int k = 0; k < newCluster->popCount; ++k)
-            newCluster->population[k]->pid = newCluster->cid;
+        for (unsigned int k = 0; k < neqtzrutc->popCount; ++k)
+            neqtzrutc->population[k]->pid = neqtzrutc->cid;
 
         get_cluster_stats(cluster);
-        get_cluster_stats(newCluster);
+        get_cluster_stats(neqtzrutc);
         return 1; // one new cluster
     }
     cluster->cannotSplit = 1;
@@ -563,7 +563,7 @@ static int32_t clusterize(ctx_t *pctx, unsigned int maxClusters, uint8_t **palet
     return clusterCnt;
 }
 
-PyObject *chandist_quantize(PyObject *self, PyObject *arg)
+PyObject *qtzrutc_quantize(PyObject *self, PyObject *arg)
 {
     if (Py_None == arg || !PyTuple_Check(arg))
         return NULL;
@@ -671,29 +671,29 @@ PyObject *chandist_quantize(PyObject *self, PyObject *arg)
 /*
  * List of functions to add to brule in exec_brule().
  */
-static PyMethodDef chandist_functions[] = {
-    { "quantize", (PyCFunction)chandist_quantize, METH_O, chandist_quantize_doc },
+static PyMethodDef qtzrutc_functions[] = {
+    { "quantize", (PyCFunction)qtzrutc_quantize, METH_O, qtzrutc_quantize_doc },
     { NULL, NULL, 0, NULL } /* marks end of array */
 };
 
 /*
- * Documentation for chandist.
+ * Documentation for qtzrutc.
  */
-PyDoc_STRVAR(chandist_doc, "ChanDist (quantizr) 8-bit quanizer.");
+PyDoc_STRVAR(qtzrutc_doc, "qtzrutc (quantizr) 8-bit quanizer.");
 
-static PyModuleDef chandist_def = {
+static PyModuleDef qtzrutc_def = {
     PyModuleDef_HEAD_INIT,
-    "chandist",
-    chandist_doc,
+    "qtzrutc",
+    qtzrutc_doc,
     0,              /* m_size */
-    chandist_functions,/* m_methods */
+    qtzrutc_functions,/* m_methods */
     NULL,           /* m_slots */
     NULL,           /* m_traverse */
     NULL,           /* m_clear */
     NULL,           /* m_free */
 };
 
-PyMODINIT_FUNC PyInit__chandist() {
+PyMODINIT_FUNC PyInit__qtzrutc() {
     import_array();
-    return PyModuleDef_Init(&chandist_def);
+    return PyModuleDef_Init(&qtzrutc_def);
 }

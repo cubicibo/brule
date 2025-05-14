@@ -30,4 +30,4 @@ from .__metadata__ import __version__, __author__
 from .brule import Brule
 from .layouteng import LayoutEngine
 from .hextree import HexTree
-from .kdmeans import KDMeans
+from .qtzrutc import QtzrUTC

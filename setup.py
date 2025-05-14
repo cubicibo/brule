@@ -106,23 +106,15 @@ if __name__ == "__main__":
         extra_compile_args=extra_compile_args,
     )
 
-    kdkmeans = setuptools.Extension(
-        f"{NAME}._kdmeans",
-        sources=[f"src/{NAME}/_kdmeans.cc"],
+    qtzrutc = setuptools.Extension(
+        f"{NAME}._qtzrutc",
+        sources=[f"src/{NAME}/_qtzrutc.cc"],
         include_dirs=[np.get_include()],
         language="c",
         extra_compile_args=extra_compile_args,
     )
 
-    chandist = setuptools.Extension(
-        f"{NAME}._chandist",
-        sources=[f"src/{NAME}/_chandist.cc"],
-        include_dirs=[np.get_include()],
-        language="c",
-        extra_compile_args=extra_compile_args,
-    )
-
-    modules = [brule_codec, layout_eng, hextree, kdkmeans, chandist]
+    modules = [brule_codec, layout_eng, hextree, qtzrutc]
 
     def run_setup(modules):
         setuptools.setup(
