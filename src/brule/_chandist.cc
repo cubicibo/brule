@@ -46,7 +46,7 @@
 #endif
 
 #define ERR_THRESH_SKIP (2)
-#define MAX_ERROR_COMPONENT (16)
+#define MAX_ERROR_COMPONENT (14)
 #define N_ACTIVE_ROWS_DIFFUSION (3)
 #define ERROR_ROW(y, rl) ((y) % N_ACTIVE_ROWS_DIFFUSION)*(rl)
 #define ERROR_ROW_LOC(y, rl, x) (ERROR_ROW(y, rl) + (x << 2))
@@ -271,9 +271,30 @@ static inline int16_t findClosestInPalette(const ctx_t *ctx, const int32_t *irgb
     return bestFitId;
 }
 
-static int generateDitheredBitmap( const ctx_t *ctx, uint8_t **bitmap, const uint8_t *rgba,
+static int generateUnditheredBitmap(const ctx_t *ctx, uint8_t** bitmap, const uint8_t* rgba, const size_t len, const uint32_t plen)
+{
+    *bitmap = (uint8_t*)calloc(len, sizeof(uint8_t));
+    if (NULL == *bitmap)
+        return -1;
+
+    uint32_t value;
+    for (size_t k = 0; k < len; k++) {
+        value = (uint32_t)fetchColour(ctx->root, &rgba[k<<2]);
+
+        //All pixels are unmodified, all tree look-ups shall always lend on a leaf (value < plen)
+        if (value >= plen)
+            return -1;
+        (*bitmap)[k] = (uint8_t)value;
+    }
+    return 0;
+}
+
+static int generateBitmap( const ctx_t* ctx, uint8_t** bitmap, const uint8_t* rgba,
                                    const size_t len, const int16_t plen, const uint32_t width )
 {
+    if (0 == width) {
+        return generateUnditheredBitmap(ctx, bitmap, rgba, len, plen);
+    }
     const uint32_t rowLen = width << 2;
     const uint32_t errArrLen = (width << 2) * N_ACTIVE_ROWS_DIFFUSION;
 
@@ -291,6 +312,7 @@ static int generateDitheredBitmap( const ctx_t *ctx, uint8_t **bitmap, const uin
     const uint8_t *rgbaPixel;
 
     int direction = -1;
+    register DTYPE_ERROR tmpErr;
     
     for (uint32_t y = 0, lineId = 0; y < len; y += width, ++lineId) {
         uint32_t x;
@@ -307,8 +329,12 @@ static int generateDitheredBitmap( const ctx_t *ctx, uint8_t **bitmap, const uin
 
             sErr = 0;
             for (uint8_t k = 0; k < N_COMPONENTS; k++) {
-                pErrors[k] = SIGN(pErrors[k])*MIN((DTYPE_ERROR)MAX_ERROR_COMPONENT, ABS(pErrors[k]));
-                sErr += pErrors[k]*pErrors[k];
+#define DTMAXERR (DTYPE_ERROR)MAX_ERROR_COMPONENT
+                tmpErr = MIN(pErrors[k],  DTMAXERR);
+                tmpErr = MAX(tmpErr, (-1)*DTMAXERR);
+#undef DTMAXERR
+                sErr += tmpErr*tmpErr;
+                pErrors[k] = tmpErr
             }
 
             unpackRgba(rgbaPixel, rgbaOrg);
@@ -356,24 +382,6 @@ static int generateDitheredBitmap( const ctx_t *ctx, uint8_t **bitmap, const uin
     return 0;
 }
 
-static int generateBitmap(const ctx_t *ctx, uint8_t** bitmap, const uint8_t* rgba, const size_t len, const uint32_t plen)
-{
-    *bitmap = (uint8_t*)calloc(len, sizeof(uint8_t));
-    if (NULL == *bitmap)
-        return -1;
-
-    uint32_t value;
-    for (size_t k = 0; k < len; k++) {
-        value = (uint32_t)fetchColour(ctx->root, &rgba[k<<2]);
-
-        //All pixels are unmodified, all tree look-ups shall always lend on a leaf (value < plen)
-        if (value >= plen)
-            return -1;
-        (*bitmap)[k] = (uint8_t)value;
-    }
-    return 0;
-}
-
 typedef struct cluster_s {
     uint32_t rgba[N_COMPONENTS];
     uint32_t weight;
@@ -413,7 +421,6 @@ static void get_cluster_stats(cluster_t *cluster)
     memset(cluster->rgba, 0, N_COMPONENTS*sizeof(uint32_t));
 
     for (uint32_t k = 0; k < cluster->popCount; ++k) {
-        cluster->population[k]->pid = cluster->cid;
         member = cluster->population[k];
         ADD_WEIGHTED_RGBA(cluster->rgba, member->rgba, member->count);
         cluster->weight += member->count;
@@ -421,11 +428,11 @@ static void get_cluster_stats(cluster_t *cluster)
     AVERAGE_RGBA(cluster->rgba, cluster->weight);
 
     // always use (0,0,0,0) for transparent
-    if (0 == cluster->rgba[3])
-        memset(cluster->rgba, 0, N_COMPONENTS*sizeof(uint32_t));
+    if (0 == cluster->rgba[3]) {
+        cluster->rgba[0] = cluster->rgba[1] = cluster->rgba[2] = 0;
+    }
 
-    uint32_t rgba_diff[N_COMPONENTS];
-    memset(rgba_diff, 0, N_COMPONENTS*sizeof(uint32_t));
+    uint32_t rgba_diff[] = {0, 0, 0, 0};
 
     for (uint32_t k = 0; k < cluster->popCount; ++k) {
         member = cluster->population[k];
@@ -485,6 +492,9 @@ static int split_cluster(cluster_t *cluster, cluster_t *newCluster)
         cluster->popCount -= newCluster->popCount;
         //cluster->population points to the same base address
 
+        for (unsigned int k = 0; k < newCluster->popCount; ++k)
+            newCluster->population[k]->pid = newCluster->cid;
+
         get_cluster_stats(cluster);
         get_cluster_stats(newCluster);
         return 1; // one new cluster
@@ -499,7 +509,8 @@ static int find_perform_split(cluster_t *clusters, unsigned int *clusterCnt, con
     
     int bestFit = -1;
     DTYPE_ERROR cost, highestCost = -1;
-    DTYPE_ERROR power = 2/(DTYPE_ERROR)3 - ((DTYPE_ERROR)(*clusterCnt) + (DTYPE_ERROR)0.5) / (DTYPE_ERROR)(maxClusters * 3);
+    //DTYPE_ERROR power = 2/(DTYPE_ERROR)3 - ((DTYPE_ERROR)(*clusterCnt) + (DTYPE_ERROR)0.5) / (DTYPE_ERROR)(maxClusters * 3);
+    DTYPE_ERROR power = 3/(DTYPE_ERROR)4 - ((DTYPE_ERROR)(*clusterCnt) + (DTYPE_ERROR)0.5) / (DTYPE_ERROR)(maxClusters * 2);
 
     for (unsigned int k = 0; k < *clusterCnt; ++k, ++cluster) {
         if (cluster->popCount > 1 && !cluster->cannotSplit) {
@@ -513,6 +524,7 @@ static int find_perform_split(cluster_t *clusters, unsigned int *clusterCnt, con
     if (bestFit < 0)
         return 0;
 
+    // if a critical error has happened, clusterCnt would be set to an invalid value here
     *clusterCnt += split_cluster(&clusters[bestFit], &clusters[*clusterCnt]);
     return *clusterCnt <= maxClusters;
 }
@@ -530,7 +542,10 @@ static int32_t clusterize(ctx_t *pctx, unsigned int maxClusters, uint8_t **palet
     
     clusters[0].population = pctx->leafs;
     clusters[0].popCount = pctx->nLeafs;
+
     get_cluster_stats(&clusters[0]);
+    for (unsigned int k = 0; k < clusters[0].popCount; ++k)
+        clusters[0].population[k]->pid = 0;
 
     while (clusterCnt < maxClusters && find_perform_split(clusters, &clusterCnt, maxClusters));
     if (clusterCnt > maxClusters)
@@ -570,7 +585,7 @@ PyObject *chandist_quantize(PyObject *self, PyObject *arg)
         return NULL;
 
     int nc = (int)PyLong_AsLong(pnc);
-    if (nc < 16 || nc > MAX_PALETTE_ENTRIES)
+    if (nc < 4 || nc > MAX_PALETTE_ENTRIES)
         return NULL;
 
     PyArrayObject *arr = (PyArrayObject*)pai;
@@ -590,7 +605,8 @@ PyObject *chandist_quantize(PyObject *self, PyObject *arg)
 
     const uint8_t *rgba = (const uint8_t*)PyArray_BYTES(arr);
 
-    if (width > len || (width > 0 && len % width) || len >= 16000000u)
+    // limit area to < 4096^2 to avoid an overflow when multiplying with 255.
+    if (width > len || (width > 0 && len % width) || len >= 4096*4096)
         return NULL;
 
     int32_t err = 0, plen = 0;
@@ -600,27 +616,22 @@ PyObject *chandist_quantize(PyObject *self, PyObject *arg)
     for (size_t k = 0; k < rawLen && 0 == err; k += N_COMPONENTS)
         err = insert(ctx, &rgba[k]);
 
-    //returned objects
     uint8_t *palette = NULL;
     uint8_t *bitmap = NULL;
-    PyObject *rtup = NULL;
-    PyArrayObject *arr_bitmap = NULL, *arr_pal = NULL;
-    PyArray_Descr *desc_pal = NULL, *desc_bitmap = NULL;
 
     if (0 == err) {
         //generate palette
         plen = clusterize(ctx, nc, &palette);
-        if (plen > 0 && plen <= MAX_PALETTE_ENTRIES) {
-            if (width)
-                err = generateDitheredBitmap(ctx, &bitmap, rgba, len, (int16_t)plen, width);
-            else
-                err = generateBitmap(ctx, &bitmap, rgba, len, plen);
-        } else {
+        if (plen > 0 && plen <= MAX_PALETTE_ENTRIES)
+            err = generateBitmap(ctx, &bitmap, rgba, len, (int16_t)plen, width);
+        else
             err = 1;
-        }
     }
 
-    //generate bitmap
+    PyObject *rtup = NULL;
+    PyArrayObject *arr_bitmap = NULL, *arr_pal = NULL;
+    PyArray_Descr *desc_pal = NULL, *desc_bitmap = NULL;
+
     if (plen > 0 && 0 == err) {
         npy_intp bitmap_dim = len;
         desc_bitmap = PyArray_DescrFromType(NPY_UBYTE);
