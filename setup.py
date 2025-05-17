@@ -136,7 +136,7 @@ if __name__ == "__main__":
                 'Programming Language :: Python :: 3.9',
             ],
             python_requires='>=3.11',
-            install_requires=["numpy>=2.0.1", "numba", "anytree", "opencv-python"],
+            install_requires=["numpy>=2.0.1", "numba", "opencv-python"],
             zip_safe=False,
         )
     ####run_setup
