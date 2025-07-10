@@ -25,14 +25,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-from typing import Optional
-
 import numpy as np
 import cv2
 from numpy.typing import NDArray
-
-from anytree import NodeMixin
-from anytree.search import findall
 
 class _PyKDMeans:
     def __init__(self, image: NDArray[np.uint8]) -> None:
