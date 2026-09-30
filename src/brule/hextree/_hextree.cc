@@ -348,7 +348,7 @@ static int generateDitheredBitmap( const void *vctx, uint8_t **bitmap, const uin
     const uint8_t *rgbaPixel;
 
     int direction = -1;
-    
+
     for (uint32_t y = 0, lineId = 0; y < len; y += width, ++lineId) {
         uint32_t x;
         if (direction < 0) {

@@ -24,12 +24,14 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "librle.h"
 
 #define UMAX(a, b) (a < b ? b : a)
 #define UMIN(a, b) (a < b ? a : b)
 
+//#define WIN32_ALLOW_THREADS
 #define MAX_NUM_THREADS 3
 #define ALLOC_SIZE_STEP 24576
 
@@ -43,7 +45,7 @@ typedef struct SLICE_IO_s
 
 static void* lrb_encode_slice(void *c);
 
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(WIN32_ALLOW_THREADS)
 #include <windows.h>
 #include <process.h>
 
@@ -87,27 +89,27 @@ static void* lrb_encode_slice(void *c)
         return NULL;
 
     SLICE_IO_t *in_out = (SLICE_IO_t *)c;
-    const unsigned int width = in_out->width;
-    const unsigned int height = in_out->height;
+    const uint32_t width = in_out->width;
+    const uint32_t height = in_out->height;
     const unsigned char* cbit = (const unsigned char*)in_out->bitmap_slice;
 
-    const unsigned int area = width * height;
+    const uint32_t area = width * height;
 
     lrb_rle_result rle_res;
-    unsigned long allocated_size = ALLOC_SIZE_STEP;
+    uint32_t allocated_size = ALLOC_SIZE_STEP;
     rle_res.data = (unsigned char*)malloc(ALLOC_SIZE_STEP * sizeof(unsigned char));
     if (!rle_res.data)
         return NULL;
     rle_res.length = 0;
 
-    for (unsigned long line_index = 0; line_index < area; line_index += width) {
-        unsigned long j = 0;
+    for (uint32_t line_index = 0; line_index < area; line_index += width) {
+        uint32_t j = 0;
         do {
-            unsigned long start_point = j;
-            unsigned long color = cbit[line_index + j];
+            uint32_t start_point = j;
+            uint8_t color = cbit[line_index + j];
             while ((++j < width) && (color == cbit[line_index + j]));
 
-            unsigned long distance = j - start_point;
+            uint32_t distance = j - start_point;
             if (!distance || start_point + distance > width) {
                 free(rle_res.data);
                 memset(&in_out->rle_res, 0, sizeof(lrb_rle_result));
@@ -182,7 +184,11 @@ lrb_error lrb_encode_bitmap(const void* bitmap, const unsigned int width, const 
     if (num_slices <= 1)
 #endif
     {
-        SLICE_IO_t in_out = {.bitmap_slice = (unsigned char*)bitmap, .width = width, .height = height};
+        SLICE_IO_t in_out;
+        in_out.bitmap_slice = (unsigned char*)bitmap;
+        in_out.width = width;
+        in_out.height = height;
+
         lrb_encode_slice(&in_out);
         memcpy(rle_res, &in_out.rle_res, sizeof(lrb_rle_result));
         return in_out.rle_res.length ? LRB_OK : LRB_INVALID_VALUE;
