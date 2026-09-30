@@ -110,7 +110,7 @@ PyObject* brule_decode(PyObject* self, PyObject* arg)
     if (!lrb_decode_rle((void*)data, (unsigned int)sz, &res)) {
         if (res.width && res.height) {
             npy_intp dims[2] = {res.height, res.width};
-            PyArray_Descr *desc = PyArray_DescrFromType(NPY_BYTE);
+            PyArray_Descr *desc = PyArray_DescrFromType(NPY_UBYTE);
             PyObject *arr_obj = PyArray_NewFromDescr(&PyArray_Type, desc, 2, dims, NULL, res.data, 0, NULL);
             PyArray_ENABLEFLAGS((PyArrayObject*)arr_obj, NPY_ARRAY_OWNDATA);
 

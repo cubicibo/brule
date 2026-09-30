@@ -39,14 +39,12 @@ meta = {}
 with open(f"src/{NAME}/__metadata__.py") as f:
     exec(f.read(), meta)
 
-# This chunk of code is stolen from https://github.com/pallets/markupsafe, all credits to them!!
+# This chunk of code is shamelessly stolen from https://github.com/pallets/markupsafe
 class BuildFailed(Exception):
     pass
 
-
 class ve_build_ext(build_ext):
     """This class allows C extension building to fail."""
-
     def run(self):
         try:
             super().run()
@@ -54,11 +52,6 @@ class ve_build_ext(build_ext):
             raise BuildFailed() from e
 
     def build_extension(self, ext):
-        #extra_compile_args = {
-        #    'unix': ['-O2'],
-        #}
-        #ext.extra_compile_args += extra_compile_args.get(self.compiler.compiler_type, [])
-
         try:
             super().build_extension(ext)
         except (CCompilerError, ExecError, PlatformError) as e:
@@ -77,22 +70,25 @@ def show_message(*lines):
     print("=" * 74)
 
 if __name__ == "__main__":
+    import os
+    osname = os.name
     try:
         extra_compile_args = sysconfig.get_config_var('CFLAGS').split()
     except AttributeError:
         extra_compile_args = []
 
+    pthread_flag = ["-pthread"] if osname == 'posix' else []
     brule_codec = setuptools.Extension(
-        f"{NAME}._{NAME}",
-        sources=[f"src/{NAME}/_brule.cc", f"src/{NAME}/_librle.cc"],
+        f"{NAME}._brule",
+        sources=[f"src/{NAME}/rle/_brule.cc", f"src/{NAME}/rle/_librle.cc"],
         include_dirs=[np.get_include()],
         language="c",
-        extra_compile_args=extra_compile_args,
+        extra_compile_args=extra_compile_args + pthread_flag,
     )
 
     layout_eng = setuptools.Extension(
         f"{NAME}._layouteng",
-        sources=[f"src/{NAME}/_layouteng.cc"],
+        sources=[f"src/{NAME}/layouteng/_layouteng.cc"],
         include_dirs=[np.get_include()],
         language="c",
         extra_compile_args=extra_compile_args,
@@ -100,7 +96,7 @@ if __name__ == "__main__":
 
     hextree = setuptools.Extension(
         f"{NAME}._hextree",
-        sources=[f"src/{NAME}/_hextree.cc"],
+        sources=[f"src/{NAME}/hextree/_hextree.cc"],
         include_dirs=[np.get_include()],
         language="c",
         extra_compile_args=extra_compile_args,
@@ -108,7 +104,7 @@ if __name__ == "__main__":
 
     qtzrutc = setuptools.Extension(
         f"{NAME}._qtzrutc",
-        sources=[f"src/{NAME}/_qtzrutc.cc"],
+        sources=[f"src/{NAME}/qtzr/_qtzrutc.cc"],
         include_dirs=[np.get_include()],
         language="c",
         extra_compile_args=extra_compile_args,
@@ -129,13 +125,7 @@ if __name__ == "__main__":
             package_dir={'': 'src'},
             cmdclass={"build_ext": ve_build_ext},
             ext_modules=modules,
-            classifiers=[
-                'Development Status :: 3 - Alpha',
-                'Intended Audience :: Developers',
-                'License :: OSI Approved :: MIT License',
-                'Programming Language :: Python :: 3.9',
-            ],
-            python_requires='>=3.11',
+            python_requires='>=3.12',
             install_requires=["numpy>=2.0.1", "numba", "opencv-python"],
             zip_safe=False,
         )
