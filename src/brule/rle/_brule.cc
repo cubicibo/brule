@@ -72,8 +72,8 @@ PyObject *brule_encode(PyObject *self, PyObject *arg)
         }
     }
 
-    lrb_rle_result_t res = {0};
-    if (!lrb_encode_bitmap((unsigned char*)bitmap, (unsigned int)width, (unsigned int)height, &res)) {
+    lrb_rle_result res = {0};
+    if (!lrb_encode_bitmap(bitmap, (unsigned int)width, (unsigned int)height, &res)) {
         result = Py_BuildValue("y#", (const char*)res.data, (Py_ssize_t)res.length);
 
         lrb_destroy_rle(&res);
@@ -87,7 +87,7 @@ PyObject *brule_encode(PyObject *self, PyObject *arg)
 
 PyObject* brule_decode(PyObject* self, PyObject* arg)
 {
-    lrb_bitmap_result_t res = {0};
+    lrb_bitmap_result res = {0};
     Py_ssize_t sz = 0;
     char *data = NULL;
 
@@ -110,7 +110,7 @@ PyObject* brule_decode(PyObject* self, PyObject* arg)
     if (!lrb_decode_rle((void*)data, (unsigned int)sz, &res)) {
         if (res.width && res.height) {
             npy_intp dims[2] = {res.height, res.width};
-            PyArray_Descr *desc = PyArray_DescrFromType(NPY_BYTE);
+            PyArray_Descr *desc = PyArray_DescrFromType(NPY_UBYTE);
             PyObject *arr_obj = PyArray_NewFromDescr(&PyArray_Type, desc, 2, dims, NULL, res.data, 0, NULL);
             PyArray_ENABLEFLAGS((PyArrayObject*)arr_obj, NPY_ARRAY_OWNDATA);
 

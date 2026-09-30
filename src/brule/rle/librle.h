@@ -49,15 +49,15 @@
 #endif
 
 typedef struct lrb_rle_result {
-	unsigned int length;
-	unsigned char* data;
-} lrb_rle_result_t;
+    unsigned int length;
+    unsigned char* data;
+} lrb_rle_result;
 
 typedef struct lrb_bitmap_result {
-	unsigned int width;
-	unsigned int height;
-	unsigned char* data;
-} lrb_bitmap_result_t;
+    unsigned int width;
+    unsigned int height;
+    unsigned char* data;
+} lrb_bitmap_result;
 
 typedef enum lrb_error {
 	LRB_OK = 0,
@@ -72,16 +72,16 @@ typedef enum lrb_error {
 } lrb_error;
 
 // Encode bitmap to RLE
-LRB_EXPORT_API LRB_FRESULT lrb_error lrb_encode_bitmap(const unsigned char* bitmap, const unsigned int width, const unsigned int height, lrb_rle_result_t* rle_res) LRB_NONNULL;
+LRB_EXPORT_API LRB_FRESULT lrb_error lrb_encode_bitmap(const void* bitmap, const unsigned int width, const unsigned int height, lrb_rle_result* rle_res) LRB_NONNULL;
 
 // Decode RLE to bitmap
-LRB_EXPORT_API LRB_FRESULT lrb_error lrb_decode_rle(const void* data, const unsigned int length, lrb_bitmap_result_t* bitmap_res);
+LRB_EXPORT_API LRB_FRESULT lrb_error lrb_decode_rle(const void* data, const unsigned int length, lrb_bitmap_result* bitmap_res) LRB_NONNULL;
 
 // Destroy a bitmap (decode) result
-LRB_EXPORT_API LRB_FRESULT lrb_error lrb_destroy_bitmap(lrb_bitmap_result_t* bitmap) LRB_NONNULL;
+LRB_EXPORT_API LRB_FRESULT lrb_error lrb_destroy_bitmap(lrb_bitmap_result* bitmap_res) LRB_NONNULL;
 
 // Destroy a rle (encode) result
-LRB_EXPORT_API LRB_FRESULT lrb_error lrb_destroy_rle(lrb_rle_result_t* rle) LRB_NONNULL;
+LRB_EXPORT_API LRB_FRESULT lrb_error lrb_destroy_rle(lrb_rle_result* rle_res) LRB_NONNULL;
 
 // lib version
 LRB_EXPORT_API int lrb_version(void);

@@ -24,7 +24,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 
 #include "librle.h"
 
@@ -34,27 +33,67 @@
 #define MAX_NUM_THREADS 3
 #define ALLOC_SIZE_STEP 24576
 
-typedef struct SLICE_INPUT_s
+typedef struct SLICE_IO_s
 {
     const unsigned char* bitmap_slice;
     unsigned int width;
     unsigned int height;
-    lrb_rle_result_t rle_res;
-} SLICE_INPUT_t;
+    lrb_rle_result rle_res;
+} SLICE_IO_t;
 
-void* lrb_encode_slice(void *c)
+static void* lrb_encode_slice(void *c);
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <process.h>
+
+# define HAS_THREADING
+static unsigned __stdcall lrb_encode_slice_win(void *arg)
+{
+    return lrb_encode_slice(arg) != NULL;
+}
+
+typedef HANDLE THREAD_t;
+# define thread_init(t, ar) (t = (THREAD_t)(_beginthreadex(NULL, 0, lrb_encode_slice_win, (void*)ar, 0, NULL)))
+# define thread_join(t, r) r = WaitForSingleObject(t, INFINITE)
+static inline lrb_error thread_validate(THREAD_t *t, uint32_t rv)
+{
+    int success = 0;
+    DWORD exit_code = 0;
+    if (rv != WAIT_OBJECT_0)
+        CloseHandle(*t);
+    else {
+        success = GetExitCodeThread(*t, &exit_code);
+        CloseHandle(*t);
+    }
+    return success && exit_code == 0 ? LRB_OK : LRB_THREAD_FAIL;
+}
+
+/* inaccurate posix detection */
+#elif (defined(__unix__) || defined(__unix) || (defined(__APPLE__) && defined(__MACH__)))
+#include <pthread.h>
+
+# define HAS_THREADING
+typedef pthread_t THREAD_t;
+# define thread_init(t, ar) (pthread_create(&t, NULL, lrb_encode_slice, (void*)ar) == 0)
+# define thread_join(t, r) pthread_join(t, NULL)
+static inline lrb_error thread_validate(THREAD_t *t, uint32_t rv) { return LRB_OK; }
+
+#endif /// ifelse threading
+
+static void* lrb_encode_slice(void *c)
 {
     if (!c)
         return NULL;
 
-    SLICE_INPUT_t *in_out = (SLICE_INPUT_t *)c;
+    SLICE_IO_t *in_out = (SLICE_IO_t *)c;
     const unsigned int width = in_out->width;
     const unsigned int height = in_out->height;
     const unsigned char* cbit = (const unsigned char*)in_out->bitmap_slice;
 
     const unsigned int area = width * height;
 
-    lrb_rle_result_t rle_res;
+    lrb_rle_result rle_res;
     unsigned long allocated_size = ALLOC_SIZE_STEP;
     rle_res.data = (unsigned char*)malloc(ALLOC_SIZE_STEP * sizeof(unsigned char));
     if (!rle_res.data)
@@ -71,7 +110,7 @@ void* lrb_encode_slice(void *c)
             unsigned long distance = j - start_point;
             if (!distance || start_point + distance > width) {
                 free(rle_res.data);
-                memset(&in_out->rle_res, 0, sizeof(lrb_rle_result_t));
+                memset(&in_out->rle_res, 0, sizeof(lrb_rle_result));
                 return NULL;
             }
             if (0 == color) {
@@ -100,10 +139,16 @@ void* lrb_encode_slice(void *c)
             }
             if (allocated_size < rle_res.length + 8) {
                 allocated_size += ALLOC_SIZE_STEP;
-                unsigned char* tmpptr = (unsigned char*)realloc(rle_res.data, allocated_size * sizeof(unsigned char));
-                if (!tmpptr || allocated_size > 8 << 20) {
+                if (allocated_size > 8u << 20)
+                {
                     free(rle_res.data);
-                    memset(&in_out->rle_res, 0, sizeof(lrb_rle_result_t));
+                    memset(&in_out->rle_res, 0, sizeof(lrb_rle_result));
+                    return NULL;
+                }
+                unsigned char* tmpptr = (unsigned char*)realloc(rle_res.data, allocated_size * sizeof(unsigned char));
+                if (!tmpptr) {
+                    free(rle_res.data);
+                    memset(&in_out->rle_res, 0, sizeof(lrb_rle_result));
                     return NULL;
                 }
                 rle_res.data = tmpptr;
@@ -116,8 +161,7 @@ void* lrb_encode_slice(void *c)
     return c;
 }
 
-
-lrb_error lrb_encode_bitmap(const unsigned char* bitmap, const unsigned int width, const unsigned int height, lrb_rle_result_t* rle_res)
+lrb_error lrb_encode_bitmap(const void* bitmap, const unsigned int width, const unsigned int height, lrb_rle_result* rle_res)
 {
     if (!rle_res)
         return LRB_INVALID_PTR;
@@ -131,25 +175,29 @@ lrb_error lrb_encode_bitmap(const unsigned char* bitmap, const unsigned int widt
     if (rle_res->data)
         return LRB_INVALID_PTR;
 
-    const uint32_t num_slices = UMIN(height/100, MAX_NUM_THREADS);
+#ifdef HAS_THREADING
+    // don't create threads for small widths
+    const uint32_t num_slices = width >= 250 ? UMIN(height/200, MAX_NUM_THREADS) : 1u;
 
-    if (num_slices == 1)
+    if (num_slices <= 1)
+#endif
     {
-        SLICE_INPUT_t in_out = {.bitmap_slice = bitmap, .width = width, .height = height};
-        lrb_error e = lrb_encode_slice(&in_out) ? LRB_OK : LRB_THREAD_FAIL;
-        memcpy(rle_res, &in_out.rle_res, sizeof(lrb_rle_result_t));
-        return e;
+        SLICE_IO_t in_out = {.bitmap_slice = (unsigned char*)bitmap, .width = width, .height = height};
+        lrb_encode_slice(&in_out);
+        memcpy(rle_res, &in_out.rle_res, sizeof(lrb_rle_result));
+        return in_out.rle_res.length ? LRB_OK : LRB_INVALID_VALUE;
     }
 
-    pthread_t threads[MAX_NUM_THREADS] = {0};
-    SLICE_INPUT_t *slice, *slices[MAX_NUM_THREADS];
+#ifdef HAS_THREADING
+    THREAD_t threads[MAX_NUM_THREADS] = {0};
+    SLICE_IO_t *slice, *slices[MAX_NUM_THREADS] = {0};
 
     const uint32_t stride_height = height / num_slices;
     uint32_t orphaned_lines = height - stride_height*num_slices;
     uint32_t offset = 0;
     for (uint32_t s = 0; s < num_slices; ++s)
     {
-        slices[s] = slice = (SLICE_INPUT_t*)malloc(sizeof(SLICE_INPUT_t));
+        slices[s] = slice = (SLICE_IO_t*)calloc(1, sizeof(SLICE_IO_t));
         if (slice) {
             slice->width = width;
             slice->height = stride_height;
@@ -160,46 +208,57 @@ lrb_error lrb_encode_bitmap(const unsigned char* bitmap, const unsigned int widt
             else {
                 slice->height = stride_height;
             }
-            slice->bitmap_slice = &bitmap[offset];
+            slice->bitmap_slice = &((unsigned char*)bitmap)[offset];
             offset += slice->height*width;
-            pthread_create(&threads[s], NULL, *lrb_encode_slice, (void *) slice);
+            if (!thread_init(threads[s], slice))
+            {
+                free(slice);
+                slices[s] = NULL;
+                break;
+            }
         }
     }
 
     lrb_error gbl_err = LRB_OK;
 
-    uint32_t total_length = 0, total_written = 0;
+    uint32_t total_length = 0;
     rle_res->length = 0;
     for (uint32_t s = 0; s < num_slices; ++s)
     {
-        SLICE_INPUT_t *slice = slices[s];
+        SLICE_IO_t *slice = slices[s];
         if (threads[s])
         {
-            void *p;
-            pthread_join(threads[s], &p);
+            uint32_t r;
+            thread_join(threads[s], r);
 
-            if (p && gbl_err == LRB_OK)
+            if (LRB_OK == thread_validate(&threads[s], r) && gbl_err == LRB_OK && slice)
             {
                 if (rle_res->length + slice->rle_res.length > total_length) {
                     total_length += slice->rle_res.length * num_slices; /* possibly enough to do it once */
-                    rle_res->data = (unsigned char*)realloc(rle_res->data, total_length);
+                    unsigned char *ptmp = (unsigned char*)realloc(rle_res->data, total_length);
+                    if (!ptmp) {
+                        gbl_err = LRB_ENOMEM;
+                        goto slice_clear;
+                    }
+                    rle_res->data = ptmp;
                 }
-                memcpy(&rle_res->data[total_written], slice->rle_res.data, slice->rle_res.length);
+                memcpy(&rle_res->data[rle_res->length], slice->rle_res.data, slice->rle_res.length);
                 rle_res->length += slice->rle_res.length;
             }
             else if (gbl_err == LRB_OK)
-                gbl_err = LRB_THREAD_FAIL;
+                gbl_err = slice ? LRB_THREAD_FAIL : LRB_ENOMEM;
         }
+slice_clear:
         if (slice) {
             free(slice->rle_res.data);
             free(slice);
         }
     }
     return gbl_err;
+#endif // HAS_THREADING
 }
 
-
-lrb_error lrb_decode_rle(const unsigned char* data, const unsigned int length, lrb_bitmap_result_t* bitmap_res)
+lrb_error lrb_decode_rle(const void* data, const unsigned int length, lrb_bitmap_result* bitmap_res)
 {
     if (!data || !bitmap_res)
         return LRB_INVALID_PTR;
@@ -210,11 +269,11 @@ lrb_error lrb_decode_rle(const unsigned char* data, const unsigned int length, l
     if (bitmap_res->data)
         return LRB_INVALID_PTR;
 
-    bitmap_res->data = (unsigned char*)malloc(allocated_size * sizeof(unsigned char));
+    bitmap_res->data = (unsigned char*)calloc(allocated_size, sizeof(unsigned char));
     if (!bitmap_res->data)
         return LRB_ENOMEM;
 
-    const unsigned char* rle = data;
+    const unsigned char* rle = (const unsigned char*)data;
     unsigned char* tmpptr;
     unsigned int i = 0, line_width = 0, repeat_len, rle_cmd;
     unsigned long j = 0, line_index = 0;
@@ -233,7 +292,7 @@ lrb_error lrb_decode_rle(const unsigned char* data, const unsigned int length, l
                 }
                 else if (j != line_width) {
                     free(bitmap_res->data);
-                    memset(bitmap_res, 0, sizeof(lrb_bitmap_result_t));
+                    memset(bitmap_res, 0, sizeof(lrb_bitmap_result));
                     return LRB_INVALID_DATA;
                 }
                 repeat_len = j = 0;
@@ -246,10 +305,16 @@ lrb_error lrb_decode_rle(const unsigned char* data, const unsigned int length, l
         }
         if (line_index + j + repeat_len >= allocated_size) {
             allocated_size += ALLOC_SIZE_STEP;
-            tmpptr = (unsigned char*)realloc(bitmap_res->data, allocated_size * sizeof(unsigned char));
-            if (!tmpptr || allocated_size > 8 << 20) {
+            if (allocated_size > 8u << 20)
+            {
                 free(bitmap_res->data);
-                memset(bitmap_res, 0, sizeof(lrb_bitmap_result_t));
+                memset(bitmap_res, 0, sizeof(lrb_bitmap_result));
+                return LRB_ENOMEM;
+            }
+            tmpptr = (unsigned char*)realloc(bitmap_res->data, allocated_size * sizeof(unsigned char));
+            if (!tmpptr) {
+                free(bitmap_res->data);
+                memset(bitmap_res, 0, sizeof(lrb_bitmap_result));
                 return LRB_ENOMEM;
             }
             bitmap_res->data = tmpptr;
@@ -260,7 +325,7 @@ lrb_error lrb_decode_rle(const unsigned char* data, const unsigned int length, l
     } while (++i < length);
     if (i > length) {
         free(bitmap_res->data);
-        memset(bitmap_res, 0, sizeof(lrb_bitmap_result_t));
+        memset(bitmap_res, 0, sizeof(lrb_bitmap_result));
         return LRB_INVALID_DATA;
     }
     bitmap_res->height = line_index / line_width;
@@ -268,25 +333,25 @@ lrb_error lrb_decode_rle(const unsigned char* data, const unsigned int length, l
     return LRB_OK;
 }
 
-lrb_error lrb_destroy_bitmap(lrb_bitmap_result_t* bitmap)
+lrb_error lrb_destroy_bitmap(lrb_bitmap_result* bitmap)
 {
     if (!bitmap)
         return LRB_INVALID_PTR;
 
     if (bitmap->data)
         free(bitmap->data);
-    memset(bitmap, 0, sizeof(lrb_bitmap_result_t));
+    memset(bitmap, 0, sizeof(lrb_bitmap_result));
     return LRB_OK;
 }
 
-lrb_error lrb_destroy_rle(lrb_rle_result_t* rle)
+lrb_error lrb_destroy_rle(lrb_rle_result* rle)
 {
     if (!rle)
         return LRB_INVALID_PTR;
 
     if (rle->data)
         free(rle->data);
-    memset(rle, 0, sizeof(lrb_rle_result_t));
+    memset(rle, 0, sizeof(lrb_rle_result));
     return LRB_OK;
 }
 
