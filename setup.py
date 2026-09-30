@@ -87,7 +87,7 @@ if __name__ == "__main__":
         sources=[f"src/{NAME}/_brule.cc", f"src/{NAME}/_librle.cc"],
         include_dirs=[np.get_include()],
         language="c",
-        extra_compile_args=extra_compile_args,
+        extra_compile_args=extra_compile_args + ["-lpthread"],
     )
 
     layout_eng = setuptools.Extension(

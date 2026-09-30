@@ -72,8 +72,8 @@ PyObject *brule_encode(PyObject *self, PyObject *arg)
         }
     }
 
-    lrb_rle_result res = {0};
-    if (!lrb_encode_bitmap(bitmap, (unsigned int)width, (unsigned int)height, &res)) {
+    lrb_rle_result_t res = {0};
+    if (!lrb_encode_bitmap((unsigned char*)bitmap, (unsigned int)width, (unsigned int)height, &res)) {
         result = Py_BuildValue("y#", (const char*)res.data, (Py_ssize_t)res.length);
 
         lrb_destroy_rle(&res);
@@ -87,7 +87,7 @@ PyObject *brule_encode(PyObject *self, PyObject *arg)
 
 PyObject* brule_decode(PyObject* self, PyObject* arg)
 {
-    lrb_bitmap_result res = {0};
+    lrb_bitmap_result_t res = {0};
     Py_ssize_t sz = 0;
     char *data = NULL;
 

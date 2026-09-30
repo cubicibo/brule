@@ -36,8 +36,8 @@
 # define LRB_EXPORT_API
 #endif
 
-#define LRB_VERSION ((int)1)
-#define LRB_VERSION_STR "0.0.1"
+#define LRB_VERSION ((int)0x000002)
+#define LRB_VERSION_STR "0.0.2"
 #define LRB_AUTHOR "cubicibo"
 
 #if EXPORT_DYLIB && (defined(__GNUC__) || defined (__llvm__))
@@ -51,13 +51,13 @@
 typedef struct lrb_rle_result {
 	unsigned int length;
 	unsigned char* data;
-} lrb_rle_result;
+} lrb_rle_result_t;
 
 typedef struct lrb_bitmap_result {
 	unsigned int width;
 	unsigned int height;
 	unsigned char* data;
-} lrb_bitmap_result;
+} lrb_bitmap_result_t;
 
 typedef enum lrb_error {
 	LRB_OK = 0,
@@ -68,19 +68,20 @@ typedef enum lrb_error {
 	LRB_INVALID_VALUE,
 	LRB_INVALID_DIMENSION,
 	LRB_UNSUPPORTED,
+    LRB_THREAD_FAIL,
 } lrb_error;
 
-// Encode bitmap to RLE 
-LRB_EXPORT_API LRB_FRESULT lrb_error lrb_encode_bitmap(const void* bitmap, const unsigned int width, const unsigned int height, lrb_rle_result* rle_res) LRB_NONNULL;
+// Encode bitmap to RLE
+LRB_EXPORT_API LRB_FRESULT lrb_error lrb_encode_bitmap(const unsigned char* bitmap, const unsigned int width, const unsigned int height, lrb_rle_result_t* rle_res) LRB_NONNULL;
 
-// Decode RLE to bitmap 
-LRB_EXPORT_API LRB_FRESULT lrb_error lrb_decode_rle(const void* data, const unsigned int length, lrb_bitmap_result* bitmap_res) LRB_NONNULL;
+// Decode RLE to bitmap
+LRB_EXPORT_API LRB_FRESULT lrb_error lrb_decode_rle(const void* data, const unsigned int length, lrb_bitmap_result_t* bitmap_res);
 
 // Destroy a bitmap (decode) result
-LRB_EXPORT_API LRB_FRESULT lrb_error lrb_destroy_bitmap(lrb_bitmap_result* bitmap_res) LRB_NONNULL;
+LRB_EXPORT_API LRB_FRESULT lrb_error lrb_destroy_bitmap(lrb_bitmap_result_t* bitmap) LRB_NONNULL;
 
 // Destroy a rle (encode) result
-LRB_EXPORT_API LRB_FRESULT lrb_error lrb_destroy_rle(lrb_rle_result* rle_res) LRB_NONNULL;
+LRB_EXPORT_API LRB_FRESULT lrb_error lrb_destroy_rle(lrb_rle_result_t* rle) LRB_NONNULL;
 
 // lib version
 LRB_EXPORT_API int lrb_version(void);
