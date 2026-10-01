@@ -46,16 +46,16 @@ typedef struct SLICE_IO_s
 static void* lrb_encode_slice(void *c);
 
 #if defined(_WIN32) && defined(WIN32_ALLOW_THREADS)
-#include <windows.h>
-#include <process.h>
-
+# include <windows.h>
+# include <process.h>
 # define HAS_THREADING
+
+typedef HANDLE THREAD_t;
 static unsigned __stdcall lrb_encode_slice_win(void *arg)
 {
     return lrb_encode_slice(arg) != NULL;
 }
 
-typedef HANDLE THREAD_t;
 # define thread_init(t, ar) (t = (THREAD_t)(_beginthreadex(NULL, 0, lrb_encode_slice_win, (void*)ar, 0, NULL)))
 # define thread_join(t, r) r = WaitForSingleObject(t, INFINITE)
 static inline lrb_error thread_validate(THREAD_t *t, uint32_t rv)
@@ -72,16 +72,16 @@ static inline lrb_error thread_validate(THREAD_t *t, uint32_t rv)
 }
 
 /* inaccurate posix detection */
-#elif (defined(__unix__) || defined(__unix) || (defined(__APPLE__) && defined(__MACH__)))
-#include <pthread.h>
-
+#elif !defined(_WIN32) && (defined(__unix__) || defined(__unix) || (defined(__APPLE__) && defined(__MACH__)))
+# include <pthread.h>
 # define HAS_THREADING
+
 typedef pthread_t THREAD_t;
 # define thread_init(t, ar) (pthread_create(&t, NULL, lrb_encode_slice, (void*)ar) == 0)
 # define thread_join(t, r) pthread_join(t, NULL)
 static inline lrb_error thread_validate(THREAD_t *t, uint32_t rv) { return LRB_OK; }
 
-#endif /// ifelse threading
+#endif /// ifelse os/sys name
 
 static void* lrb_encode_slice(void *c)
 {
