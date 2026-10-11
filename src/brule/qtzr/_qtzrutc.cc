@@ -151,7 +151,7 @@ static uint8_t inline indexFrom(const uint8_t *v, const uint8_t depth)
 }
 
 static void flush(hexnode_t *current)
-{    
+{
     for (uint8_t c = 0; c < MAX_WIDTH; c++) {
         if (current->children[c])
             flush(current->children[c]);
@@ -313,7 +313,7 @@ static int generateBitmap( const ctx_t* ctx, uint8_t** bitmap, const uint8_t* rg
 
     int direction = -1;
     register DTYPE_ERROR tmpErr;
-    
+
     for (uint32_t y = 0, lineId = 0; y < len; y += width, ++lineId) {
         uint32_t x;
         if (direction < 0) {
@@ -506,7 +506,7 @@ static int split_cluster(cluster_t *cluster, cluster_t *neqtzrutc)
 static int find_perform_split(cluster_t *clusters, unsigned int *clusterCnt, const unsigned int maxClusters)
 {
     const cluster_t *cluster = &clusters[0];
-    
+
     int bestFit = -1;
     DTYPE_ERROR cost, highestCost = -1;
     //DTYPE_ERROR power = 2/(DTYPE_ERROR)3 - ((DTYPE_ERROR)(*clusterCnt) + (DTYPE_ERROR)0.5) / (DTYPE_ERROR)(maxClusters * 3);
@@ -539,7 +539,7 @@ static int32_t clusterize(ctx_t *pctx, unsigned int maxClusters, uint8_t **palet
         clusters[k].cid = k;
     for (unsigned int k = maxClusters; k < MAX_PALETTE_ENTRIES; ++k)
         clusters[k].cid = MAX_PALETTE_ENTRIES;
-    
+
     clusters[0].population = pctx->leafs;
     clusters[0].popCount = pctx->nLeafs;
 

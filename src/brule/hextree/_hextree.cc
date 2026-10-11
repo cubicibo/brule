@@ -120,7 +120,7 @@ static uint8_t inline indexFrom(const uint8_t *v, const uint8_t depth)
 }
 
 static void flush(hexnode_t *current)
-{    
+{
     for (uint8_t c = 0; c < MAX_WIDTH; c++) {
         if (current->children[c])
             flush(current->children[c]);
