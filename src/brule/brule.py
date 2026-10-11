@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 MIT License
 
@@ -118,7 +115,7 @@ def _try_numba() -> _CodecFunctions:
 class Brule:
     _numba_codec = None
     _cimpl_codec = None
-    
+
     @classmethod
     def _setup(cls) -> None:
         try:

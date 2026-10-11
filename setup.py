@@ -39,7 +39,7 @@ meta = {}
 with open(f"src/{NAME}/__metadata__.py") as f:
     exec(f.read(), meta)
 
-# This chunk of code is shamelessly stolen from https://github.com/pallets/markupsafe
+# This fallback build system is taken from  https://github.com/pallets/markupsafe (BSD-3 license)
 class BuildFailed(Exception):
     pass
 

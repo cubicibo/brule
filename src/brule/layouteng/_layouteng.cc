@@ -316,7 +316,7 @@ static int get_current_container(layout_t *le, container_t *current_cont)
 }
 
 PyObject *layouteng_add(PyObject *self, PyObject *arg)
-{    
+{
     if (Py_None == arg || !PyTuple_Check(arg) || 4 != PyTuple_Size(arg)) {
         return NULL;
     }
