@@ -14,6 +14,13 @@ Brule implements 2 or 3 times the same function, and select the fastest implemen
 For the encoder, the C implementation is up to 20 times faster than numba. The pure Python implementation does not compete and is only there for convenience.
 
 ## Install
+### From PyPi:
+Brule is available on PyPi under the name `brulegfx`:
+```bash
+$ python -m pip install brulegfx
+```
+
+### From repository
 Given `./brule` the (cloned) repository:
 ```bash
 $ python -m pip install ./brule
@@ -38,10 +45,12 @@ The image quantizer is used like this:
 >>> from brule import HexTree, QtzrUTC
 >>> import numpy as np
 >>> from PIL import Image
+>>>
 >>> rgba = np.asarray(Image.open(...).convert('RGBA'))
->>> #quantize with 255 colours 
+>>>
+>>> #quantize
 >>> bitmap1, palette1 = HexTree.quantize(rgba, 255)
->>> bitmap2, palette2 = QtzrUTC.quantize(rgba, 255)
+>>> bitmap2, palette2 = QtzrUTC.quantize(rgba, 123)
 ```
 
 ## Credits
