@@ -1,2 +1,20 @@
 [build-system]
-requires = ["setuptools", "wheel", "Cython>=0.29", "numpy>=2.0"]
+requires = ["setuptools>=64", "numpy>=2.0.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brulegfx"
+version = "0.0.6"
+authors = [{ name = "cubicibo", email = "cubicibo@outlook.com" }]
+description = "Bitmap utilities (RLE, RGBA quantization, Segmentation)"
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [ "numpy>=2.0.1", "numba", "opencv-python", ]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+zip-safe = false
+
+[tool.setuptools.packages.find]
+where = ["src"]

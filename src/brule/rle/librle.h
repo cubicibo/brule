@@ -36,8 +36,8 @@
 # define LRB_EXPORT_API
 #endif
 
-#define LRB_VERSION ((int)0x000002)
-#define LRB_VERSION_STR "0.0.2"
+#define LRB_VERSION ((int)0x000003)
+#define LRB_VERSION_STR "0.0.3"
 #define LRB_AUTHOR "cubicibo"
 
 #if EXPORT_DYLIB && (defined(__GNUC__) || defined (__llvm__))

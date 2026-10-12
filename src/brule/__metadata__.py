@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-__MAJOR, __MINOR, __REVISION = 0, 0, 5
+__MAJOR, __MINOR, __REVISION = 0, 0, 6
 
 __version__ = '.'.join(map(str, [__MAJOR, __MINOR, __REVISION]))
 __author__ = 'cubicibo'

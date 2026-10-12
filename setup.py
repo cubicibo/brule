@@ -1,10 +1,7 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 MIT License
 
-Copyright (c) 2024 cubicibo
+Copyright (c) 2024-26 cubicibo
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+import os
 import setuptools
 import sysconfig
 import numpy as np
@@ -34,10 +32,6 @@ from setuptools.errors import ExecError
 from setuptools.errors import PlatformError
 
 NAME = 'brule'
-
-meta = {}
-with open(f"src/{NAME}/__metadata__.py") as f:
-    exec(f.read(), meta)
 
 # This fallback build system is taken from  https://github.com/pallets/markupsafe (BSD-3 license)
 class BuildFailed(Exception):
@@ -59,7 +53,7 @@ class ve_build_ext(build_ext):
         except ValueError as e:
             import sys
             # this can happen on Windows 64 bit, see Python issue 7511
-            if "'path'" in str(sys.exc_info()[1]):  # works with Python 2 and 3
+            if "'path'" in str(sys.exc_info()[1]):
                 raise BuildFailed() from e
             raise
 
@@ -70,18 +64,18 @@ def show_message(*lines):
     print("=" * 74)
 
 if __name__ == "__main__":
-    import os
-    osname = os.name
     try:
         extra_compile_args = sysconfig.get_config_var('CFLAGS').split()
     except AttributeError:
         extra_compile_args = []
 
-    pthread_flag = ["-pthread"] if osname == 'posix' else []
+    include_dirs = [np.get_include()]
+    pthread_flag = ["-pthread"] if os.name == 'posix' else []
+
     brule_codec = setuptools.Extension(
         f"{NAME}._brule",
         sources=[f"src/{NAME}/rle/_brule.cc", f"src/{NAME}/rle/_librle.cc"],
-        include_dirs=[np.get_include()],
+        include_dirs=include_dirs,
         language="c",
         extra_compile_args=extra_compile_args + pthread_flag,
     )
@@ -89,7 +83,7 @@ if __name__ == "__main__":
     layout_eng = setuptools.Extension(
         f"{NAME}._layouteng",
         sources=[f"src/{NAME}/layouteng/_layouteng.cc"],
-        include_dirs=[np.get_include()],
+        include_dirs=include_dirs,
         language="c",
         extra_compile_args=extra_compile_args,
     )
@@ -97,7 +91,7 @@ if __name__ == "__main__":
     hextree = setuptools.Extension(
         f"{NAME}._hextree",
         sources=[f"src/{NAME}/hextree/_hextree.cc"],
-        include_dirs=[np.get_include()],
+        include_dirs=include_dirs,
         language="c",
         extra_compile_args=extra_compile_args,
     )
@@ -105,7 +99,7 @@ if __name__ == "__main__":
     qtzrutc = setuptools.Extension(
         f"{NAME}._qtzrutc",
         sources=[f"src/{NAME}/qtzr/_qtzrutc.cc"],
-        include_dirs=[np.get_include()],
+        include_dirs=include_dirs,
         language="c",
         extra_compile_args=extra_compile_args,
     )
@@ -114,22 +108,11 @@ if __name__ == "__main__":
 
     def run_setup(modules):
         setuptools.setup(
-            name=NAME,
-            version=meta['__version__'],
-            author=meta['__author__'],
-            description="Bitmap RUn LEngth module",
-            long_description=open("README.md").read(),
-            long_description_content_type="text/markdown",
-            license="MIT",
-            packages=setuptools.find_packages("src"),
-            package_dir={'': 'src'},
             cmdclass={"build_ext": ve_build_ext},
             ext_modules=modules,
-            python_requires='>=3.12',
-            install_requires=["numpy>=2.0.1", "numba", "opencv-python"],
-            zip_safe=False,
         )
-    ####run_setup
+    ####
+
     try:
         run_setup(modules)
     except BuildFailed:
